@@ -272,6 +272,10 @@ final class CompanionManager: ObservableObject {
     let backgroundComputerUseController = OpenClickyBackgroundComputerUseController()
     @Published private(set) var codexAgentSessions: [CodexAgentSession]
     @Published private(set) var activeCodexAgentSessionID: UUID
+    /// Session IDs the user has archived from the chat sidebar. Persisted to UserDefaults.
+    /// Archived sessions remain in `codexAgentSessions` so transcripts/state are preserved;
+    /// the sidebar simply hides them under an Archived section.
+    @Published private(set) var archivedSessionIDs: Set<UUID> = ChatWorkspaceArchiveStore.load()
     let codexHUDWindowManager = CodexHUDWindowManager()
     let wikiViewerPanelManager = WikiViewerPanelManager()
     @Published private(set) var bundledKnowledgeIndex = WikiManager.Index.empty
@@ -2197,6 +2201,35 @@ final class CompanionManager: ObservableObject {
         guard codexAgentSessions.contains(where: { $0.id == sessionID }) else { return }
         activeCodexAgentSessionID = sessionID
         lastAgentContextSessionID = sessionID
+    }
+
+    /// Mark a session as archived. Keeps the session alive so its transcript and state
+    /// are preserved; the sidebar groups archived sessions under a separate header.
+    func archiveSession(_ sessionID: UUID) {
+        guard codexAgentSessions.contains(where: { $0.id == sessionID }) else { return }
+        archivedSessionIDs.insert(sessionID)
+        ChatWorkspaceArchiveStore.save(archivedSessionIDs)
+        if activeCodexAgentSessionID == sessionID {
+            if let next = codexAgentSessions.first(where: { !archivedSessionIDs.contains($0.id) }) {
+                selectCodexAgentSession(next.id)
+            } else {
+                _ = createAndSelectNewCodexAgentSession()
+            }
+        }
+    }
+
+    /// Restore a previously archived session.
+    func unarchiveSession(_ sessionID: UUID) {
+        guard archivedSessionIDs.contains(sessionID) else { return }
+        archivedSessionIDs.remove(sessionID)
+        ChatWorkspaceArchiveStore.save(archivedSessionIDs)
+    }
+
+    /// Pop the currently active session into a floating mini-chat NSPanel scoped to that session.
+    /// The mini-chat dies with the parent HUD via `MiniChatPanelManager.shared.destroyAll()`.
+    func popoutCurrentSession() {
+        let session = codexAgentSession
+        MiniChatPanelManager.shared.show(session: session, companion: self)
     }
 
     func closeCodexAgentSession(_ sessionID: UUID) {

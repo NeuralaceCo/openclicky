@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		24E363952FB3400600B27AB1 /* GLTFSceneKit in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB042F6500040039DA55 /* GLTFSceneKit */; };
 		AA00BB032F6500030039DA55 /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = AA00BB022F6500020039DA55 /* Sparkle */; };
 		AA20BF010000000000000001 /* OpenClickyWidgetModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA20FR010000000000000001 /* OpenClickyWidgetModels.swift */; };
 		AA20BF020000000000000001 /* OpenClickyWidgetSnapshotReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA20FR020000000000000001 /* OpenClickyWidgetSnapshotReader.swift */; };
@@ -100,6 +101,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				24E363952FB3400600B27AB1 /* GLTFSceneKit in Frameworks */,
 				AA00BB032F6500030039DA55 /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

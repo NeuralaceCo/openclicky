@@ -3,16 +3,23 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Combine
 
-private enum OpenClickyHUDLayout {
-    static let width: CGFloat = 594
-    static let height: CGFloat = 452
-    static let minimumWidth: CGFloat = 594
+enum OpenClickyHUDLayout {
+    static let width: CGFloat = 980
+    static let height: CGFloat = 560
+    static let minimumWidth: CGFloat = 720
     static let minimumHeight: CGFloat = 452
 }
 
 @MainActor
-final class CodexHUDWindowManager {
+final class CodexHUDWindowManager: NSObject, NSWindowDelegate {
     private var panel: NSPanel?
+
+    nonisolated func windowShouldClose(_ sender: NSWindow) -> Bool {
+        // Route the red traffic-light close through hide() so the panel
+        // and its SwiftUI hosting view stay alive for the next show().
+        Task { @MainActor in self.hide() }
+        return false
+    }
 
     func show(
         companionManager: CompanionManager,
@@ -25,14 +32,13 @@ final class CodexHUDWindowManager {
                 openMemory: openMemory,
                 prepareVoiceFollowUp: prepareVoiceFollowUp
             )
-        } else if let hostingView = panel?.contentView as? NSHostingView<CodexHUDView> {
-            hostingView.rootView = CodexHUDView(
+        } else if let hostingView = panel?.contentView as? NSHostingView<ChatWorkspaceView> {
+            hostingView.rootView = ChatWorkspaceView(
                 companionManager: companionManager,
                 openMemory: openMemory,
-                prepareVoiceFollowUp: prepareVoiceFollowUp
-            ) { [weak self] in
-                self?.hide()
-            }
+                prepareVoiceFollowUp: prepareVoiceFollowUp,
+                dismiss: { [weak self] in self?.hide() }
+            )
         }
         enforceMinimumSize()
         positionPanel()
@@ -45,6 +51,7 @@ final class CodexHUDWindowManager {
     }
 
     func destroy() {
+        MiniChatPanelManager.shared.destroyAll()
         panel?.close()
         panel = nil
     }
@@ -55,32 +62,34 @@ final class CodexHUDWindowManager {
         prepareVoiceFollowUp: @escaping () -> Void
     ) -> NSPanel {
         let hostingView = NSHostingView(
-            rootView: CodexHUDView(
+            rootView: ChatWorkspaceView(
                 companionManager: companionManager,
                 openMemory: openMemory,
-                prepareVoiceFollowUp: prepareVoiceFollowUp
-            ) { [weak self] in
-                self?.hide()
-            }
+                prepareVoiceFollowUp: prepareVoiceFollowUp,
+                dismiss: { [weak self] in self?.hide() }
+            )
         )
+        // Standard macOS window chrome: title bar + traffic lights (close /
+        // minimize / zoom). We keep NSPanel for the menu-bar app context but
+        // drop every borderless / floating attribute so the OS draws normal
+        // chrome. No transparency, no hidden title, no floating level.
         let panel = NSPanel(
             contentRect: NSRect(x: 0, y: 0, width: OpenClickyHUDLayout.width, height: OpenClickyHUDLayout.height),
-            styleMask: [.nonactivatingPanel, .titled, .fullSizeContentView, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         panel.title = "OpenClicky"
-        panel.titleVisibility = .hidden
-        panel.titlebarAppearsTransparent = true
-        panel.isMovableByWindowBackground = true
-        panel.level = .floating
-        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        panel.backgroundColor = .clear
-        panel.isOpaque = false
-        panel.hasShadow = false
+        panel.titleVisibility = .visible
+        panel.titlebarAppearsTransparent = false
+        panel.isMovableByWindowBackground = false
+        panel.collectionBehavior = [.fullScreenPrimary]
+        panel.hasShadow = true
         panel.minSize = NSSize(width: OpenClickyHUDLayout.minimumWidth, height: OpenClickyHUDLayout.minimumHeight)
         panel.contentMinSize = NSSize(width: OpenClickyHUDLayout.minimumWidth, height: OpenClickyHUDLayout.minimumHeight)
         panel.contentView = hostingView
+        panel.delegate = self
+        panel.isReleasedWhenClosed = false
         return panel
     }
 
@@ -114,7 +123,7 @@ final class CodexHUDWindowManager {
     }
 }
 
-private struct CodexHUDView: View {
+struct CodexHUDView: View {
     private struct HUDDraftAttachment: Identifiable, Equatable {
         let id = UUID()
         let url: URL
@@ -151,11 +160,13 @@ private struct CodexHUDView: View {
         let payload: Payload
     }
 
+    enum ChromeMode { case standalone, embedded }
     @ObservedObject var companionManager: CompanionManager
     @AppStorage(ClickyAccentTheme.userDefaultsKey) private var selectedAccentThemeID = ClickyAccentTheme.blue.rawValue
     var openMemory: () -> Void
     var prepareVoiceFollowUp: () -> Void
     var close: () -> Void
+    var chromeMode: ChromeMode = .standalone
     @State private var prompt = ""
     @State private var hiddenOverlayDockItemID: UUID?
     @State private var expandedCommandGroupIDs: Set<String> = []
@@ -178,7 +189,7 @@ private struct CodexHUDView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
+            if chromeMode == .standalone { header }
             agentTeamStrip
             if let item = activeDockItem {
                 ClickyAgentDockHoverCard(
@@ -217,10 +228,12 @@ private struct CodexHUDView: View {
                 .fill(DS.Colors.borderSubtle.opacity(0.7))
                 .frame(height: 0.5)
             transcript
-            Rectangle()
-                .fill(DS.Colors.borderSubtle.opacity(0.7))
-                .frame(height: 0.5)
-            composer
+            if chromeMode == .standalone {
+                Rectangle()
+                    .fill(DS.Colors.borderSubtle.opacity(0.7))
+                    .frame(height: 0.5)
+                composer
+            }
         }
         .frame(
             minWidth: OpenClickyHUDLayout.minimumWidth,
@@ -231,12 +244,22 @@ private struct CodexHUDView: View {
             maxHeight: .infinity
         )
         .background(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color(red: 0.067, green: 0.075, blue: 0.071).opacity(0.98))
+            Group {
+                if chromeMode == .standalone {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .fill(Color(red: 0.117, green: 0.117, blue: 0.117))
+                } else {
+                    Color(red: 0.117, green: 0.117, blue: 0.117)
+                }
+            }
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : Color.white.opacity(0.10), lineWidth: isDropTargeted ? 1.4 : 1)
+            Group {
+                if chromeMode == .standalone {
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(isDropTargeted ? DS.Colors.accentText.opacity(0.55) : Color.white.opacity(0.10), lineWidth: isDropTargeted ? 1.4 : 1)
+                }
+            }
         )
         .overlay(alignment: .center) {
             if isDropTargeted {
