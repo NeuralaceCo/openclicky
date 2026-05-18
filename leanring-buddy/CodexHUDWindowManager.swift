@@ -131,8 +131,8 @@ final class CodexHUDWindowManager {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func visibleScreenFrame(for panel: NSPanel) -> NSRect? {
-        let screen = NSScreen.screen(containingOrNearestTo: NSEvent.mouseLocation) ?? panel.screen
+    private func visibleScreenFrame(for fallbackPanel: NSPanel) -> NSRect? {
+        let screen = NSScreen.screen(containingOrNearestTo: NSEvent.mouseLocation) ?? fallbackPanel.screen
         return screen?.visibleFrame
     }
 
