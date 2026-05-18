@@ -343,12 +343,16 @@ final class CompanionManager: ObservableObject {
 
     private var cachedDeepgramTTSClient: DeepgramTTSClient?
     private var cachedDeepgramTTSSnapshot: DeepgramTTSConfigurationSnapshot?
+    /// Mirrors `DeepgramTTSClient.makeError(-100, "Deepgram API key is not configured")`.
+    /// Used for explicit missing-key diagnostics in `voice.response_failure_silent`.
+    private static let deepgramNotConfiguredErrorCode = -100
 
-    private var deepgramTTSClient: DeepgramTTSClient {
-        buildOrRefreshDeepgramTTSClient(reason: "access")
+    private var activeDeepgramTTSClient: DeepgramTTSClient {
+        getOrBuildDeepgramTTSClient(reason: "access")
     }
 
-    private func buildOrRefreshDeepgramTTSClient(reason: String) -> DeepgramTTSClient {
+    @MainActor
+    private func getOrBuildDeepgramTTSClient(reason: String) -> DeepgramTTSClient {
         let currentSnapshot = DeepgramTTSConfigurationSnapshot.current()
         if let cachedDeepgramTTSClient, cachedDeepgramTTSSnapshot == currentSnapshot {
             return cachedDeepgramTTSClient
@@ -378,8 +382,10 @@ final class CompanionManager: ObservableObject {
         return refreshedClient
     }
 
+    @MainActor
     private func invalidateDeepgramTTSClient(reason: String) {
-        let snapshotBeforeInvalidate = cachedDeepgramTTSSnapshot ?? DeepgramTTSConfigurationSnapshot.current()
+        let snapshotBeforeInvalidate = cachedDeepgramTTSSnapshot
+        let liveSnapshot = DeepgramTTSConfigurationSnapshot.current()
         cachedDeepgramTTSClient?.stopPlayback()
         cachedDeepgramTTSClient = nil
         cachedDeepgramTTSSnapshot = nil
@@ -390,10 +396,22 @@ final class CompanionManager: ObservableObject {
             fields: [
                 "provider": OpenClickyTTSProvider.deepgram.rawValue,
                 "reason": reason,
-                "keyConfigured": snapshotBeforeInvalidate.hasAPIKey,
-                "voiceID": snapshotBeforeInvalidate.voiceID
+                "keyConfigured": snapshotBeforeInvalidate?.hasAPIKey ?? liveSnapshot.hasAPIKey,
+                "voiceID": snapshotBeforeInvalidate?.voiceID ?? liveSnapshot.voiceID,
+                "snapshotSource": snapshotBeforeInvalidate == nil ? "live_defaults" : "cached_client"
             ]
         )
+    }
+
+    @MainActor
+    private func warmDeepgramTTSClientIfActive() {
+        guard selectedTTSProvider == .deepgram else { return }
+        // Accessing `activeDeepgramTTSClient` rebuilds only when the config
+        // snapshot changed; otherwise it returns the cached active client.
+        // In either case, warm the active client to avoid cold-start delay.
+        let currentClient = activeDeepgramTTSClient
+        currentClient.warmUpConnection()
+        FillerPhraseLibrary.shared.prepare(client: currentClient)
     }
 
     private lazy var microsoftEdgeTTSClient: MicrosoftEdgeTTSClient = {
@@ -450,7 +468,7 @@ final class CompanionManager: ObservableObject {
         case .openAIRealtime: return openAIRealtimeSpeechClient
         case .elevenLabs: return elevenLabsTTSClient
         case .cartesia:   return cartesiaTTSClient
-        case .deepgram:   return deepgramTTSClient
+        case .deepgram:   return activeDeepgramTTSClient
         case .microsoftEdge: return microsoftEdgeTTSClient
         }
     }
@@ -501,11 +519,7 @@ final class CompanionManager: ObservableObject {
             voiceID: AppBundleConfiguration.deepgramTTSVoice(),
             thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
         )
-        if selectedTTSProvider == .deepgram {
-            let refreshedClient = deepgramTTSClient
-            refreshedClient.warmUpConnection()
-            FillerPhraseLibrary.shared.prepare(client: refreshedClient)
-        }
+        warmDeepgramTTSClientIfActive()
     }
 
     func setMicrosoftEdgeVoiceID(_ voiceID: String) {
@@ -1285,11 +1299,7 @@ final class CompanionManager: ObservableObject {
             voiceID: AppBundleConfiguration.deepgramTTSVoice(),
             thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
         )
-        if selectedTTSProvider == .deepgram {
-            let refreshedClient = deepgramTTSClient
-            refreshedClient.warmUpConnection()
-            FillerPhraseLibrary.shared.prepare(client: refreshedClient)
-        }
+        warmDeepgramTTSClientIfActive()
     }
 
     func setDeepgramVoiceAgentThinkModel(_ model: String) {
@@ -11392,7 +11402,7 @@ final class CompanionManager: ObservableObject {
             "error": error.localizedDescription,
             "message": message
         ]
-        ttsFailureDiagnosticFields(for: error).forEach { fields[$0.key] = $0.value }
+        fields.merge(ttsFailureDiagnosticFields(for: error), uniquingKeysWith: { _, new in new })
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "incoming",
@@ -11436,7 +11446,7 @@ final class CompanionManager: ObservableObject {
         case "ElevenLabsTTS":
             return "Voice playback failed, but the Claude response completed. Check the app log for the TTS error."
         case "DeepgramTTS":
-            if nsError.code == -100 {
+            if nsError.code == Self.deepgramNotConfiguredErrorCode {
                 return "Deepgram is not configured. Add a Deepgram API key in Settings."
             }
             return "Deepgram voice playback failed. Check the app log for the TTS error."
@@ -11459,8 +11469,8 @@ final class CompanionManager: ObservableObject {
             fields["deepgramVoiceID"] = currentSnapshot.voiceID
             fields["deepgramSnapshotMatchesClient"] = (cachedDeepgramTTSSnapshot == currentSnapshot)
 
-            if nsError.domain == "DeepgramTTS", nsError.code == -100 {
-                fields["ttsFailureKind"] = currentSnapshot.hasAPIKey ? "stale_client_or_config" : "missing_key"
+            if nsError.domain == "DeepgramTTS", nsError.code == Self.deepgramNotConfiguredErrorCode {
+                fields["ttsFailureKind"] = currentSnapshot.hasAPIKey ? "stale_client" : "missing_key"
             } else if nsError.domain == "DeepgramTTS" {
                 fields["ttsFailureKind"] = "playback_failure"
             } else {
