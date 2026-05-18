@@ -150,19 +150,25 @@ struct CodexAgentModeTests {
     }
 
     @Test func implicitAgentRoutingStartsGitHubIssueTaskImmediately() throws {
+        let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
+            from: "Can you make an issue on GitHub to fix this?"
+        )
+        #expect(maybeInstruction != nil)
         let instruction = try #require(
-            CompanionManager.implicitAgentTaskInstruction(from: "Can you make an issue on GitHub to fix this?")
+            maybeInstruction
         )
 
         #expect(instruction.lowercased() == "make an issue on github to fix this")
     }
 
     @Test func implicitAgentRoutingTreatsUiChangeRequestsAsAgentTasks() throws {
-        let instruction = try #require(
-            CompanionManager.implicitAgentTaskInstruction(from: "Add a volume slider.")
+        let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
+            from: "Add a volume slider to the app."
         )
+        #expect(maybeInstruction != nil)
+        let instruction = try #require(maybeInstruction)
 
-        #expect(instruction.lowercased() == "add a volume slider")
+        #expect(instruction.lowercased() == "add a volume slider to the app")
     }
 
     @Test func implicitAgentRoutingSkipsSensitiveOrDestructiveRequests() throws {

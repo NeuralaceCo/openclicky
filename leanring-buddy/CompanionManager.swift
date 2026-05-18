@@ -7508,6 +7508,10 @@ final class CompanionManager: ObservableObject {
         let hasDestructiveTarget = normalized.range(of: destructiveTargetPattern, options: .regularExpression) != nil
         let hasSensitiveTarget = normalized.range(of: sensitiveTargetsPattern, options: .regularExpression) != nil
 
+        // Safety policy:
+        // - credential/permission/auth targets are always confirmation-worthy.
+        // - destructive verbs are confirmation-worthy when aimed at a destructive target
+        //   or broad-scope operation.
         return hasSensitiveTarget || (hasDestructiveVerb && (hasBroadScope || hasDestructiveTarget))
     }
 
