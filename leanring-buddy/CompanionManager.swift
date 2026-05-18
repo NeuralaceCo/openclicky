@@ -6793,6 +6793,11 @@ final class CompanionManager: ObservableObject {
     private static func isLikelyAgentToolWorkInstruction(_ instruction: String) -> Bool {
         let normalized = normalizedSpokenCommandText(instruction)
         let toolWorkSignals = [
+            "github",
+            "issue",
+            "issues",
+            "pull request",
+            "pr",
             "desktop",
             "download",
             "downloads",
@@ -6817,6 +6822,10 @@ final class CompanionManager: ObservableObject {
             "audit",
             "look at",
             "take a look",
+            "research",
+            "summarize",
+            "summary",
+            "slider",
             "find",
             "search"
         ]
@@ -7514,12 +7523,13 @@ final class CompanionManager: ObservableObject {
             || isReferentialAgentWorkFollowUp(transcript)
     }
 
-    private static func implicitAgentTaskInstruction(from transcript: String) -> String? {
+    static func implicitAgentTaskInstruction(from transcript: String) -> String? {
         let candidate = normalizedAgentTaskInstruction(from: transcript)
         let normalized = normalizedSpokenCommandText(candidate)
         guard wordCount(in: normalized) >= 3 else { return nil }
         guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
         guard !isLikelyPureConversation(candidate) else { return nil }
+        guard !isSensitiveOrDestructiveAgentTaskRequest(normalized) else { return nil }
 
         let hasAction = containsAgentWorkAction(normalized)
         let hasToolContext = isLikelyAgentToolWorkInstruction(candidate)
@@ -7557,13 +7567,31 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func containsDurableWorkTarget(_ normalized: String) -> Bool {
-        let targetPattern = #"\b(?:openclicky|clicky|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|issue|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides)\b"#
+        let targetPattern = #"\b(?:openclicky|clicky|github|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|pr|issue|issues|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides)\b"#
         return normalized.range(of: targetPattern, options: .regularExpression) != nil
     }
 
     private static func containsFreshResearchRequest(_ normalized: String) -> Bool {
         let researchPattern = #"\b(?:latest|live|price|news|weather|schedule|standings|research|look\s+up|search\s+(?:the\s+)?web|google|browse)\b"#
         return normalized.range(of: researchPattern, options: .regularExpression) != nil
+    }
+
+    private static func isSensitiveOrDestructiveAgentTaskRequest(_ normalized: String) -> Bool {
+        let destructivePattern = #"\b(?:delete|remove|erase|wipe|destroy|drop|revoke|reset|nuke|clear|purge|uninstall|terminate|kill)\b"#
+        let broadScopePattern = #"\b(?:all|everything|entire|whole)\b"#
+        let destructiveTargetPattern = #"\b(?:file|files|folder|folders|directory|directories|repo|repository|branch|branches|commit|commits|tag|tags|history|database|databases|keychain|account|accounts)\b"#
+        let sensitiveTargetsPattern = #"\b(?:account|accounts|credential|credentials|password|passwords|token|tokens|api\s*key|secret|secrets|permission|permissions|auth|ssh|private\s+key|keychain|database|databases|prod|production|system\s+settings)\b"#
+
+        let hasDestructiveVerb = normalized.range(of: destructivePattern, options: .regularExpression) != nil
+        let hasBroadScope = normalized.range(of: broadScopePattern, options: .regularExpression) != nil
+        let hasDestructiveTarget = normalized.range(of: destructiveTargetPattern, options: .regularExpression) != nil
+        let hasSensitiveTarget = normalized.range(of: sensitiveTargetsPattern, options: .regularExpression) != nil
+
+        // Safety policy:
+        // - credential/permission/auth targets are always confirmation-worthy.
+        // - destructive verbs are confirmation-worthy when aimed at a destructive target
+        //   or broad-scope operation.
+        return hasSensitiveTarget || (hasDestructiveVerb && (hasBroadScope || hasDestructiveTarget))
     }
 
     private static func isLikelyDirectLocalOnlyRequest(_ transcript: String) -> Bool {
@@ -7639,7 +7667,7 @@ final class CompanionManager: ObservableObject {
     private static func hasAgentWorkVerbAndArtifact(_ transcript: String) -> Bool {
         let normalized = normalizedSpokenCommandText(transcript)
         let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run|stop)\b"#
-        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls)\b"#
+        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|github|issue|issues|pull\s+request|pr|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls|ui|volume|slider|control)\b"#
         return normalized.range(of: workVerbPattern, options: .regularExpression) != nil
             && normalized.range(of: artifactPattern, options: .regularExpression) != nil
     }
