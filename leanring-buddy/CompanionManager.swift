@@ -324,12 +324,77 @@ final class CompanionManager: ObservableObject {
         )
     }()
 
-    private lazy var deepgramTTSClient: DeepgramTTSClient = {
-        return DeepgramTTSClient(
-            apiKey: AppBundleConfiguration.deepgramAPIKey(),
-            voiceID: AppBundleConfiguration.deepgramTTSVoice()
+    private struct DeepgramTTSConfigurationSnapshot: Equatable {
+        let apiKey: String?
+        let voiceID: String
+
+        var hasAPIKey: Bool {
+            guard let apiKey else { return false }
+            return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+
+        static func current() -> Self {
+            Self(
+                apiKey: AppBundleConfiguration.deepgramAPIKey(),
+                voiceID: AppBundleConfiguration.deepgramTTSVoice()
+            )
+        }
+    }
+
+    private var cachedDeepgramTTSClient: DeepgramTTSClient?
+    private var cachedDeepgramTTSSnapshot: DeepgramTTSConfigurationSnapshot?
+
+    private var deepgramTTSClient: DeepgramTTSClient {
+        buildOrRefreshDeepgramTTSClient(reason: "access")
+    }
+
+    private func buildOrRefreshDeepgramTTSClient(reason: String) -> DeepgramTTSClient {
+        let currentSnapshot = DeepgramTTSConfigurationSnapshot.current()
+        if let cachedDeepgramTTSClient, cachedDeepgramTTSSnapshot == currentSnapshot {
+            return cachedDeepgramTTSClient
+        }
+
+        let previousSnapshot = cachedDeepgramTTSSnapshot
+        cachedDeepgramTTSClient?.stopPlayback()
+        let refreshedClient = DeepgramTTSClient(
+            apiKey: currentSnapshot.apiKey,
+            voiceID: currentSnapshot.voiceID
         )
-    }()
+        cachedDeepgramTTSClient = refreshedClient
+        cachedDeepgramTTSSnapshot = currentSnapshot
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.tts_client_refreshed",
+            fields: [
+                "provider": OpenClickyTTSProvider.deepgram.rawValue,
+                "reason": previousSnapshot == nil ? "initial" : reason,
+                "keyConfigured": currentSnapshot.hasAPIKey,
+                "voiceID": currentSnapshot.voiceID,
+                "snapshotChanged": previousSnapshot != currentSnapshot
+            ]
+        )
+        return refreshedClient
+    }
+
+    private func invalidateDeepgramTTSClient(reason: String) {
+        let snapshotBeforeInvalidate = cachedDeepgramTTSSnapshot ?? DeepgramTTSConfigurationSnapshot.current()
+        cachedDeepgramTTSClient?.stopPlayback()
+        cachedDeepgramTTSClient = nil
+        cachedDeepgramTTSSnapshot = nil
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: "internal",
+            event: "voice.tts_client_invalidated",
+            fields: [
+                "provider": OpenClickyTTSProvider.deepgram.rawValue,
+                "reason": reason,
+                "keyConfigured": snapshotBeforeInvalidate.hasAPIKey,
+                "voiceID": snapshotBeforeInvalidate.voiceID
+            ]
+        )
+    }
 
     private lazy var microsoftEdgeTTSClient: MicrosoftEdgeTTSClient = {
         return MicrosoftEdgeTTSClient(
@@ -430,17 +495,16 @@ final class CompanionManager: ObservableObject {
         } else {
             UserDefaults.standard.set(trimmed, forKey: AppBundleConfiguration.userDeepgramTTSVoiceDefaultsKey)
         }
-        deepgramTTSClient.updateConfiguration(
-            apiKey: AppBundleConfiguration.deepgramAPIKey(),
-            voiceID: AppBundleConfiguration.deepgramTTSVoice()
-        )
+        invalidateDeepgramTTSClient(reason: "deepgram_voice_updated")
         deepgramVoiceAgentClient.updateConfiguration(
             apiKey: AppBundleConfiguration.deepgramAPIKey(),
             voiceID: AppBundleConfiguration.deepgramTTSVoice(),
             thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
         )
         if selectedTTSProvider == .deepgram {
-            FillerPhraseLibrary.shared.prepare(client: deepgramTTSClient)
+            let refreshedClient = deepgramTTSClient
+            refreshedClient.warmUpConnection()
+            FillerPhraseLibrary.shared.prepare(client: refreshedClient)
         }
     }
 
@@ -471,6 +535,9 @@ final class CompanionManager: ObservableObject {
             self.voiceTTSClient.stopPlayback()
             self.selectedTTSProvider = provider
             UserDefaults.standard.set(provider.rawValue, forKey: AppBundleConfiguration.userTTSProviderDefaultsKey)
+            if provider == .deepgram {
+                self.invalidateDeepgramTTSClient(reason: "tts_provider_switched")
+            }
             self.voiceTTSClient.warmUpConnection()
             FillerPhraseLibrary.shared.prepare(client: self.voiceTTSClient)
         }
@@ -1212,15 +1279,17 @@ final class CompanionManager: ObservableObject {
     func setDeepgramAPIKey(_ apiKey: String) {
         persistOptionalSecret(apiKey, defaultsKey: AppBundleConfiguration.userDeepgramAPIKeyDefaultsKey)
         buddyDictationManager.setTranscriptionProvider(buddyDictationManager.transcriptionProviderID)
-        deepgramTTSClient.updateConfiguration(
-            apiKey: AppBundleConfiguration.deepgramAPIKey(),
-            voiceID: AppBundleConfiguration.deepgramTTSVoice()
-        )
+        invalidateDeepgramTTSClient(reason: "deepgram_key_updated")
         deepgramVoiceAgentClient.updateConfiguration(
             apiKey: AppBundleConfiguration.deepgramAPIKey(),
             voiceID: AppBundleConfiguration.deepgramTTSVoice(),
             thinkModel: AppBundleConfiguration.deepgramVoiceAgentThinkModel()
         )
+        if selectedTTSProvider == .deepgram {
+            let refreshedClient = deepgramTTSClient
+            refreshedClient.warmUpConnection()
+            FillerPhraseLibrary.shared.prepare(client: refreshedClient)
+        }
     }
 
     func setDeepgramVoiceAgentThinkModel(_ model: String) {
@@ -11319,14 +11388,16 @@ final class CompanionManager: ObservableObject {
         guard !Self.isExpectedCancellation(error) else { return }
         let message = userFacingResponseFailureMessage(for: error)
         print("⚠️ Voice response failure (silent — no system-voice fallback): \(message)")
+        var fields: [String: Any] = [
+            "error": error.localizedDescription,
+            "message": message
+        ]
+        ttsFailureDiagnosticFields(for: error).forEach { fields[$0.key] = $0.value }
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
             direction: "incoming",
             event: "voice.response_failure_silent",
-            fields: [
-                "error": error.localizedDescription,
-                "message": message
-            ]
+            fields: fields
         )
         latestVoiceResponseCard = ClickyResponseCard(
             source: .voice,
@@ -11364,11 +11435,44 @@ final class CompanionManager: ObservableObject {
             return "Claude returned an error. Check the app log for the exact response."
         case "ElevenLabsTTS":
             return "Voice playback failed, but the Claude response completed. Check the app log for the TTS error."
+        case "DeepgramTTS":
+            if nsError.code == -100 {
+                return "Deepgram is not configured. Add a Deepgram API key in Settings."
+            }
+            return "Deepgram voice playback failed. Check the app log for the TTS error."
         case "CompanionScreenCapture":
             return "Screen capture failed. Grant Screen Recording to this exact app, then quit and reopen."
         default:
             return "Something went wrong. Check the app log for the exact error."
         }
+    }
+
+    private func ttsFailureDiagnosticFields(for error: Error) -> [String: Any] {
+        let nsError = error as NSError
+        var fields: [String: Any] = [
+            "ttsProvider": selectedTTSProvider.rawValue
+        ]
+
+        if selectedTTSProvider == .deepgram || nsError.domain == "DeepgramTTS" {
+            let currentSnapshot = DeepgramTTSConfigurationSnapshot.current()
+            fields["deepgramKeyConfigured"] = currentSnapshot.hasAPIKey
+            fields["deepgramVoiceID"] = currentSnapshot.voiceID
+            fields["deepgramSnapshotMatchesClient"] = (cachedDeepgramTTSSnapshot == currentSnapshot)
+
+            if nsError.domain == "DeepgramTTS", nsError.code == -100 {
+                fields["ttsFailureKind"] = currentSnapshot.hasAPIKey ? "stale_client_or_config" : "missing_key"
+            } else if nsError.domain == "DeepgramTTS" {
+                fields["ttsFailureKind"] = "playback_failure"
+            } else {
+                fields["ttsFailureKind"] = "unknown"
+            }
+            return fields
+        }
+
+        if nsError.domain == "ElevenLabsTTS" || nsError.domain == "CartesiaTTS" {
+            fields["ttsFailureKind"] = "playback_failure"
+        }
+        return fields
     }
 
     // MARK: - Point Tag Parsing
