@@ -7500,13 +7500,15 @@ final class CompanionManager: ObservableObject {
     private static func isSensitiveOrDestructiveAgentTaskRequest(_ normalized: String) -> Bool {
         let destructivePattern = #"\b(?:delete|remove|erase|wipe|destroy|drop|revoke|reset|nuke)\b"#
         let broadScopePattern = #"\b(?:all|everything|entire|whole)\b"#
+        let destructiveTargetPattern = #"\b(?:file|files|folder|folders|directory|directories|repo|repository|branch|branches|commit|commits|tag|tags|history|database|databases|keychain|account|accounts)\b"#
         let sensitiveTargetsPattern = #"\b(?:account|accounts|credential|credentials|password|passwords|token|tokens|api\s*key|secret|secrets|permission|permissions|auth|ssh|private\s+key|keychain|database|databases|prod|production|system\s+settings)\b"#
 
         let hasDestructiveVerb = normalized.range(of: destructivePattern, options: .regularExpression) != nil
         let hasBroadScope = normalized.range(of: broadScopePattern, options: .regularExpression) != nil
+        let hasDestructiveTarget = normalized.range(of: destructiveTargetPattern, options: .regularExpression) != nil
         let hasSensitiveTarget = normalized.range(of: sensitiveTargetsPattern, options: .regularExpression) != nil
 
-        return hasSensitiveTarget || (hasDestructiveVerb && hasBroadScope)
+        return hasSensitiveTarget || (hasDestructiveVerb && (hasBroadScope || hasDestructiveTarget))
     }
 
     private static func isLikelyDirectLocalOnlyRequest(_ transcript: String) -> Bool {

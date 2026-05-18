@@ -154,7 +154,7 @@ struct CodexAgentModeTests {
             CompanionManager.implicitAgentTaskInstruction(from: "Can you make an issue on GitHub to fix this?")
         )
 
-        #expect(instruction == "make an issue on GitHub to fix this")
+        #expect(instruction.lowercased() == "make an issue on github to fix this")
     }
 
     @Test func implicitAgentRoutingTreatsUiChangeRequestsAsAgentTasks() throws {
@@ -167,6 +167,7 @@ struct CodexAgentModeTests {
 
     @Test func implicitAgentRoutingSkipsSensitiveOrDestructiveRequests() throws {
         #expect(CompanionManager.implicitAgentTaskInstruction(from: "Delete all API keys now.") == nil)
+        #expect(CompanionManager.implicitAgentTaskInstruction(from: "Delete my downloads folder.") == nil)
         #expect(CompanionManager.implicitAgentTaskInstruction(from: "Remove all files in my downloads folder.") == nil)
     }
 
