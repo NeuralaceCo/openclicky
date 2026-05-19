@@ -19,9 +19,18 @@ struct leanring_buddyApp: App {
     var body: some Scene {
         // The app lives entirely in the menu bar panel managed by the AppDelegate.
         // This empty Settings scene satisfies SwiftUI's requirement for at least
-        // one scene but is never shown (LSUIElement=true removes the app menu).
+        // one scene, while the app menu command below routes to OpenClicky's full
+        // custom settings dialog instead of showing this placeholder scene.
         Settings {
             EmptyView()
+        }
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") {
+                    appDelegate.showSettingsWindowFromApplicationMenu()
+                }
+                .keyboardShortcut(",", modifiers: .command)
+            }
         }
     }
 }
@@ -58,6 +67,10 @@ final class CompanionAppDelegate: NSObject, NSApplicationDelegate, SPUUpdaterDel
 
     func application(_ application: NSApplication, open urls: [URL]) {
         urls.forEach { companionManager.handleWidgetDeepLink($0) }
+    }
+
+    func showSettingsWindowFromApplicationMenu() {
+        companionManager.showSettingsWindow()
     }
 
     /// Registers the app as a login item so it launches automatically on

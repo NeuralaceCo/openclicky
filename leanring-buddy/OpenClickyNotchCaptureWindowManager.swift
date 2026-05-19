@@ -142,7 +142,8 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let statusPanelWidthScale: CGFloat = 0.12
     private static let statusPanelHorizontalNudge: CGFloat = 0
     private static let minimumBuiltInCollapsedPanelWidth: CGFloat = 76
-    private static let minimumVoicePanelWidth: CGFloat = 92
+    private static let compactBuiltInVoicePanelWidth: CGFloat = 92
+    private static let minimumVoicePanelWidth: CGFloat = 150
     private static let minimumExternalCollapsedPanelWidth: CGFloat = 80
     private static let maximumExternalCollapsedPanelWidth: CGFloat = 182
     private static let maximumExpandedStatusPanelWidth: CGFloat = 182
@@ -323,15 +324,17 @@ final class OpenClickyNotchCaptureWindowManager {
             guard activeMode != .text else { return }
             stopCollapsedHoverProbe()
             activeMode = .voice
-            ensureCaptureContentView(width: Self.voicePanelWidth(for: preferredAnchorScreen(), appName: foregroundAppName), height: Self.voicePanelHeight)
+            let primaryScreen = preferredAnchorScreen()
+            ensureCaptureContentView(width: Self.voicePanelWidth(for: primaryScreen, appName: foregroundAppName), height: Self.voicePanelHeight)
             contentView?.configureVoice(
                 phase: voicePhase,
                 audioPowerLevel: audioPowerLevel,
                 accentColor: Self.nsAccentColor(for: nil),
                 foregroundAppIcon: foregroundAppIcon,
-                foregroundAppName: foregroundAppName
+                foregroundAppName: foregroundAppName,
+                hidesStatusText: primaryScreen.map(Self.isLikelyBuiltInNotchScreen) ?? false
             )
-            let voiceWidth = Self.voicePanelWidth(for: preferredAnchorScreen(), appName: foregroundAppName)
+            let voiceWidth = Self.voicePanelWidth(for: primaryScreen, appName: foregroundAppName)
             showPanel(activating: false, width: voiceWidth, height: Self.voicePanelHeight)
             syncMirroredStatusPanels(
                 width: voiceWidth,
@@ -345,7 +348,8 @@ final class OpenClickyNotchCaptureWindowManager {
                     audioPowerLevel: audioPowerLevel,
                     accentColor: Self.nsAccentColor(for: nil),
                     foregroundAppIcon: self?.foregroundAppIcon,
-                    foregroundAppName: self?.foregroundAppName ?? "Current app"
+                    foregroundAppName: self?.foregroundAppName ?? "Current app",
+                    hidesStatusText: Self.isLikelyBuiltInNotchScreen(screen)
                 )
             }
         }
@@ -1170,13 +1174,14 @@ final class OpenClickyNotchCaptureWindowManager {
         return min(max(centeredX, minX), maxX)
     }
 
-    private static func voicePanelWidth(for screen: NSScreen?, appName: String = "Current app") -> CGFloat {
+    private static func voicePanelWidth(for screen: NSScreen?, appName _: String = "Current app") -> CGFloat {
         guard let screen else { return Self.minimumBuiltInCollapsedPanelWidth }
 
         if isLikelyBuiltInNotchScreen(screen) {
-            // Voice should not fall back to the older tiny listening notch. The
-            // built-in notch display keeps the same notch-surrounding bar.
-            return max(Self.minimumVoicePanelWidth, collapsedPanelWidth(for: screen, appName: appName))
+            // On the built-in MacBook Pro notch display, voice state is carried
+            // by the accent color and the right-side live indicator, so the
+            // pill can stay much narrower than the text-bearing external bar.
+            return Self.compactBuiltInVoicePanelWidth
         }
 
         // External displays expand to fit the voice content (labels + waveform).
@@ -1423,7 +1428,10 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     private let suggestionStack = NSStackView()
     private let actionStack = NSStackView()
     private let voiceTitleLabel = NSTextField(labelWithString: "Listening")
-    private let voiceSubtitleLabel = NSTextField(labelWithString: "Release the shortcut to send this turn.")
+    private let voiceSubtitleLabel = NSTextField(labelWithString: "")
+    private let voiceCopyStack = NSStackView()
+    private let voicePhaseIconView = NSImageView()
+    private var voiceCopyMinimumWidthConstraint: NSLayoutConstraint?
     private let voiceNotchSpacer = NSView()
     private let waveformView = OpenClickyNotchWaveformNSView()
     private let collapsedAppIconView = NSImageView()
@@ -1531,7 +1539,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         window?.makeFirstResponder(textField)
     }
 
-    func configureVoice(phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String) {
+    func configureVoice(phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hidesStatusText: Bool = false) {
         mode = .voice
         self.accentColor = accentColor
         expand = nil
@@ -1542,6 +1550,9 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         shellView.roundsTopCorners = false
         textStack.isHidden = true
         voiceStack.isHidden = false
+        voicePhaseIconView.isHidden = !hidesStatusText
+        voiceCopyStack.isHidden = hidesStatusText
+        voiceTitleLabel.isHidden = hidesStatusText
         collapsedAppIconView.isHidden = true
         collapsedAppNameLabel.isHidden = true
         collapsedPlayIconView.isHidden = true
@@ -1555,7 +1566,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         configureRightEdgeGradient(isVisible: true, intensity: phase == .idle ? 0.22 : 0.34)
         updateAccentColors()
         updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
-        updateVoiceLabels(for: phase, foregroundAppName: foregroundAppName)
+        updateVoiceLabels(for: phase, foregroundAppName: foregroundAppName, hidesStatusText: hidesStatusText)
         waveformView.audioPowerLevel = audioPowerLevel
         waveformView.accentColor = accentColor
     }
@@ -1669,7 +1680,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 
     private func configureForegroundAppIconViews() {
-        for imageView in [collapsedAppIconView, collapsedPlayIconView, voiceAppIconView] {
+        for imageView in [collapsedAppIconView, collapsedPlayIconView, voiceAppIconView, voicePhaseIconView] {
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.wantsLayer = true
@@ -1832,33 +1843,41 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         voiceStack.translatesAutoresizingMaskIntoConstraints = false
         shellView.addSubview(voiceStack)
 
-        let copyStack = NSStackView()
-        copyStack.orientation = .vertical
-        copyStack.alignment = .leading
-        copyStack.spacing = 0
-        copyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        copyStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        voiceCopyStack.orientation = .vertical
+        voiceCopyStack.alignment = .leading
+        voiceCopyStack.spacing = 0
+        voiceCopyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        voiceCopyStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         voiceTitleLabel.font = .systemFont(ofSize: 14, weight: .heavy)
         voiceTitleLabel.textColor = NSColor.white.withAlphaComponent(0.96)
         voiceTitleLabel.lineBreakMode = .byTruncatingTail
         voiceSubtitleLabel.font = .systemFont(ofSize: 9.5, weight: .semibold)
         voiceSubtitleLabel.textColor = NSColor.white.withAlphaComponent(0.62)
         voiceSubtitleLabel.lineBreakMode = .byTruncatingTail
-        voiceSubtitleLabel.isHidden = false
+        voiceSubtitleLabel.isHidden = true
         voiceAppIconView.setContentHuggingPriority(.required, for: .horizontal)
         voiceAppIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
+        voicePhaseIconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .heavy)
+        voicePhaseIconView.contentTintColor = accentColor
+        voicePhaseIconView.setContentHuggingPriority(.required, for: .horizontal)
+        voicePhaseIconView.setContentCompressionResistancePriority(.required, for: .horizontal)
         waveformView.translatesAutoresizingMaskIntoConstraints = false
         waveformView.setContentHuggingPriority(.required, for: .horizontal)
         waveformView.setContentCompressionResistancePriority(.required, for: .horizontal)
         voiceStack.addArrangedSubview(voiceAppIconView)
-        copyStack.addArrangedSubview(voiceTitleLabel)
-        copyStack.addArrangedSubview(voiceSubtitleLabel)
-        voiceStack.addArrangedSubview(copyStack)
+        voiceStack.addArrangedSubview(voicePhaseIconView)
+        voiceCopyStack.addArrangedSubview(voiceTitleLabel)
+        voiceCopyStack.addArrangedSubview(voiceSubtitleLabel)
+        voiceStack.addArrangedSubview(voiceCopyStack)
         voiceStack.addArrangedSubview(voiceNotchSpacer)
         voiceStack.addArrangedSubview(waveformView)
         voiceAppIconView.widthAnchor.constraint(equalToConstant: 22).isActive = true
         voiceAppIconView.heightAnchor.constraint(equalToConstant: 22).isActive = true
-        copyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 72).isActive = true
+        voicePhaseIconView.widthAnchor.constraint(equalToConstant: 14).isActive = true
+        voicePhaseIconView.heightAnchor.constraint(equalToConstant: 14).isActive = true
+        let copyMinimumWidthConstraint = voiceCopyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 72)
+        copyMinimumWidthConstraint.isActive = true
+        voiceCopyMinimumWidthConstraint = copyMinimumWidthConstraint
         // Let the middle space flex so the state/app cluster hugs the leading
         // edge and the live indicator hugs the trailing edge instead of both
         // components clustering in the center of the notch.
@@ -1975,22 +1994,34 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         }
     }
 
-    private func updateVoiceLabels(for phase: OpenClickyNotchVoicePhase, foregroundAppName: String) {
-        voiceSubtitleLabel.stringValue = foregroundAppName
+    private func updateVoiceLabels(for phase: OpenClickyNotchVoicePhase, foregroundAppName _: String, hidesStatusText: Bool) {
+        voiceSubtitleLabel.stringValue = ""
+        voiceSubtitleLabel.isHidden = true
+        voiceTitleLabel.isHidden = hidesStatusText
+        voiceCopyStack.isHidden = hidesStatusText
+        voicePhaseIconView.isHidden = !hidesStatusText
+        voiceCopyMinimumWidthConstraint?.constant = hidesStatusText ? 0 : 72
+        let symbolName: String
         switch phase {
         case .listening:
             voiceTitleLabel.stringValue = "Listening"
+            symbolName = "waveform"
             waveformView.isActive = true
         case .processing:
             voiceTitleLabel.stringValue = "Thinking"
+            symbolName = "brain.head.profile"
             waveformView.isActive = false
         case .responding:
             voiceTitleLabel.stringValue = "Speaking"
+            symbolName = "speaker.wave.2.fill"
             waveformView.isActive = true
         case .idle:
             voiceTitleLabel.stringValue = "Ready"
+            symbolName = "checkmark.circle.fill"
             waveformView.isActive = false
         }
+        voicePhaseIconView.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: voiceTitleLabel.stringValue)
+        voicePhaseIconView.contentTintColor = accentColor
     }
 
     private func updateSuggestions() {

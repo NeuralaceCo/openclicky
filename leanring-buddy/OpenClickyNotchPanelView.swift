@@ -55,8 +55,10 @@ struct OpenClickyNotchPanelView: View {
     @AppStorage(ClickyCursorAvatarSizePreference.userDefaultsKey) private var cursorAvatarSizeScale = ClickyCursorAvatarSizePreference.defaultScale
     @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
     @AppStorage(AppBundleConfiguration.userAppBoldTextDefaultsKey) private var appBoldTextEnabled = false
+    @AppStorage(AppBundleConfiguration.userAppTitleFontSizeDefaultsKey) private var appTitleFontSize = 26.0
     @AppStorage(AppBundleConfiguration.userAppBodyFontSizeDefaultsKey) private var appBodyFontSize = 13.0
     @AppStorage(AppBundleConfiguration.userAppSubtextFontSizeDefaultsKey) private var appSubtextFontSize = 11.0
+    @AppStorage(AppBundleConfiguration.userAppLineSpacingDefaultsKey) private var appLineSpacing = 2.0
     @State private var isShowingHatchSheet = false
     @State private var hatchPetName = ""
     @State private var hatchPetDescription = ""
@@ -78,11 +80,29 @@ struct OpenClickyNotchPanelView: View {
         OpenClickyResponseCaptionFont.resolved(appFontRawValue)
     }
 
+    private var titleFontSize: CGFloat { CGFloat(appTitleFontSize) }
     private var bodyFontSize: CGFloat { CGFloat(appBodyFontSize) }
     private var subtextFontSize: CGFloat { CGFloat(appSubtextFontSize) }
+    private var appTextLineSpacing: CGFloat { CGFloat(appLineSpacing) }
 
     private func appUIFont(size: CGFloat, weight: Font.Weight = .medium) -> Font {
         appFont.swiftUIFont(size: size, weight: appResolvedWeight(weight))
+    }
+
+    private func panelUIFont(size baseSize: CGFloat, weight: Font.Weight = .medium) -> Font {
+        appFont.swiftUIFont(size: scaledPanelFontSize(baseSize), weight: appResolvedWeight(weight))
+    }
+
+    private func scaledPanelFontSize(_ baseSize: CGFloat) -> CGFloat {
+        let scale: CGFloat
+        if baseSize >= 15 {
+            scale = titleFontSize / 26.0
+        } else if baseSize >= 12 {
+            scale = bodyFontSize / 13.0
+        } else {
+            scale = subtextFontSize / 11.0
+        }
+        return max(7, baseSize * scale)
     }
 
     private func appResolvedWeight(_ weight: Font.Weight) -> Font.Weight {
@@ -531,9 +551,9 @@ struct OpenClickyNotchPanelView: View {
                 } label: {
                     HStack(spacing: 7) {
                         Image(systemName: tab.systemImageName)
-                            .font(.system(size: 15, weight: .heavy))
+                            .font(panelUIFont(size: 15, weight: .heavy))
                         Text(tab.title)
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(panelUIFont(size: 10, weight: .heavy))
                     }
                     .foregroundColor(selectedTab == tab ? DS.Colors.textPrimary : DS.Colors.textSecondary)
                     .frame(maxWidth: .infinity)
@@ -604,7 +624,7 @@ struct OpenClickyNotchPanelView: View {
     private func panelChromeButton(systemImageName: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImageName)
-                .font(.system(size: 13, weight: .heavy))
+                .font(panelUIFont(size: 13, weight: .heavy))
                 .foregroundColor(DS.Colors.textSecondary)
                 .frame(width: 30, height: 30)
                 .background(
@@ -667,10 +687,10 @@ struct OpenClickyNotchPanelView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Image(systemName: "terminal.fill")
-                    .font(.system(size: 10, weight: .black))
+                    .font(panelUIFont(size: 10, weight: .black))
                     .foregroundColor(DS.Colors.accentText)
                 Text("Agent tasks")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(panelUIFont(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textSecondary)
                 Spacer(minLength: 0)
             }
@@ -702,7 +722,7 @@ struct OpenClickyNotchPanelView: View {
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1)
                 Image(systemName: "chevron.right")
-                    .font(.system(size: 8, weight: .black))
+                    .font(panelUIFont(size: 8, weight: .black))
                     .foregroundColor(DS.Colors.textTertiary)
             }
             .padding(.horizontal, 9)
@@ -728,10 +748,10 @@ struct OpenClickyNotchPanelView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 7) {
                 Image(systemName: "lightbulb.fill")
-                    .font(.system(size: 11, weight: .black))
+                    .font(panelUIFont(size: 11, weight: .black))
                     .foregroundColor(DS.Colors.accentText)
                 Text("Suggestions")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(panelUIFont(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textSecondary)
                 Spacer(minLength: 0)
             }
@@ -754,9 +774,9 @@ struct OpenClickyNotchPanelView: View {
         } label: {
             HStack(spacing: 5) {
                 Image(systemName: systemImageName)
-                    .font(.system(size: 10, weight: .black))
+                    .font(panelUIFont(size: 10, weight: .black))
                 Text(title)
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(panelUIFont(size: 9, weight: .heavy))
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
             }
@@ -917,20 +937,20 @@ struct OpenClickyNotchPanelView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 7) {
                 Image(systemName: "square.grid.2x2.fill")
-                    .font(.system(size: 12, weight: .black))
+                    .font(panelUIFont(size: 12, weight: .black))
                     .foregroundColor(.purple.opacity(0.9))
                 Text("Specialist agents")
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(panelUIFont(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textSecondary)
                 Spacer(minLength: 0)
                 Text("Tap to start")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(panelUIFont(size: 9, weight: .heavy))
                     .foregroundColor(DS.Colors.textTertiary)
             }
 
             if agentStore.agents.isEmpty {
                 Text("No specialist agents are installed yet.")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(panelUIFont(size: 10, weight: .semibold))
                     .foregroundColor(DS.Colors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(10)
@@ -972,18 +992,18 @@ struct OpenClickyNotchPanelView: View {
                     RoundedRectangle(cornerRadius: 10, style: .continuous)
                         .fill(accent.opacity(0.16))
                     Image(systemName: agent.isUserDefined ? "person.crop.circle.fill.badge.checkmark" : "person.crop.circle.badge.gearshape")
-                        .font(.system(size: 15, weight: .black))
+                        .font(panelUIFont(size: 15, weight: .black))
                         .foregroundColor(accent)
                 }
                 .frame(width: 34, height: 34)
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(agent.metadata.displayName)
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(panelUIFont(size: 11, weight: .heavy))
                         .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(1)
                     Text(agent.metadata.description.isEmpty ? agent.slug : agent.metadata.description)
-                        .font(.system(size: 9, weight: .medium))
+                        .font(panelUIFont(size: 9, weight: .medium))
                         .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(1)
                 }
@@ -1068,7 +1088,7 @@ struct OpenClickyNotchPanelView: View {
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: filter.systemImageName)
-                    .font(.system(size: 13, weight: .black))
+                    .font(panelUIFont(size: 13, weight: .black))
                 Text("\(count)")
                     .font(appUIFont(size: max(9, subtextFontSize - 2), weight: .heavy))
                     .monospacedDigit()
@@ -1125,7 +1145,7 @@ struct OpenClickyNotchPanelView: View {
     private func agentUtilityIconButton(systemImageName: String, accessibilityLabel: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: systemImageName)
-                .font(.system(size: 14, weight: .black))
+                .font(panelUIFont(size: 14, weight: .black))
                 .foregroundColor(DS.Colors.textPrimary)
                 .frame(width: 34, height: 34)
                 .background(RoundedRectangle(cornerRadius: 13, style: .continuous).fill(Color.white.opacity(0.07)))
@@ -1167,14 +1187,14 @@ struct OpenClickyNotchPanelView: View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
                 Image(systemName: "sparkles.rectangle.stack.fill")
-                    .font(.system(size: 15, weight: .black))
+                    .font(panelUIFont(size: 15, weight: .black))
                     .foregroundColor(DS.Colors.accentText)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("App skill discovery")
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(panelUIFont(size: 12, weight: .heavy))
                         .foregroundColor(DS.Colors.textPrimary)
                     Text(skillDiscoveryStatusText)
-                        .font(.system(size: 10, weight: .medium))
+                        .font(panelUIFont(size: 10, weight: .medium))
                         .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(2)
                 }
@@ -1192,7 +1212,7 @@ struct OpenClickyNotchPanelView: View {
 
             if skillDiscoveryStore.suggestions.isEmpty {
                 Text("OpenClicky will populate this with local and online skill matches after the scheduled pass runs.")
-                    .font(.system(size: 10, weight: .medium))
+                    .font(panelUIFont(size: 10, weight: .medium))
                     .foregroundColor(DS.Colors.textSecondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(9)
@@ -1224,7 +1244,7 @@ struct OpenClickyNotchPanelView: View {
     private func skillDiscoverySuggestionRow(_ suggestion: OpenClickySkillDiscoverySuggestion) -> some View {
         HStack(alignment: .top, spacing: 9) {
             Image(systemName: suggestion.source.lowercased() == "online" ? "globe" : "wand.and.stars")
-                .font(.system(size: 13, weight: .black))
+                .font(panelUIFont(size: 13, weight: .black))
                 .foregroundColor(DS.Colors.accentText)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(DS.Colors.accentText.opacity(0.12)))
@@ -1232,18 +1252,18 @@ struct OpenClickyNotchPanelView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
                     Text(suggestion.title)
-                        .font(.system(size: 11, weight: .heavy))
+                        .font(panelUIFont(size: 11, weight: .heavy))
                         .foregroundColor(DS.Colors.textPrimary)
                         .lineLimit(1)
                     Text(suggestion.sourceLabel)
-                        .font(.system(size: 8, weight: .black))
+                        .font(panelUIFont(size: 8, weight: .black))
                         .foregroundColor(DS.Colors.accentText)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
                         .background(Capsule(style: .continuous).fill(DS.Colors.accentText.opacity(0.12)))
                 }
                 Text(suggestion.detail)
-                    .font(.system(size: 9, weight: .medium))
+                    .font(panelUIFont(size: 9, weight: .medium))
                     .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(2)
             }
@@ -1254,7 +1274,7 @@ struct OpenClickyNotchPanelView: View {
                 installSkillSuggestion(suggestion)
             } label: {
                 Text(suggestion.source.lowercased() == "installed" ? "Connect" : "Install")
-                    .font(.system(size: 9, weight: .heavy))
+                    .font(panelUIFont(size: 9, weight: .heavy))
                     .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 8)
                     .padding(.vertical, 6)
@@ -1307,11 +1327,11 @@ struct OpenClickyNotchPanelView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: quickPromptMode.fieldSystemImageName)
-                    .font(.system(size: 15, weight: .bold))
+                    .font(panelUIFont(size: 15, weight: .bold))
                     .foregroundColor(DS.Colors.accentText)
                 TextField(quickPromptAttachments.isEmpty ? quickPromptMode.placeholder : "Ask about the attachment…", text: $quickPrompt, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(panelUIFont(size: 13, weight: .medium))
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1...5)
                     .fixedSize(horizontal: false, vertical: true)
@@ -1329,9 +1349,9 @@ struct OpenClickyNotchPanelView: View {
                 Button(action: submitQuickPrompt) {
                     HStack(spacing: 5) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 12, weight: .black))
+                            .font(panelUIFont(size: 12, weight: .black))
                         Text("Send")
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(panelUIFont(size: 11, weight: .heavy))
                     }
                     .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 10)
@@ -1377,10 +1397,10 @@ struct OpenClickyNotchPanelView: View {
                     if compactChatEntries.isEmpty {
                         VStack(alignment: .leading, spacing: 5) {
                             Text("Chat stays here")
-                                .font(.system(size: 12, weight: .heavy))
+                                .font(panelUIFont(size: 12, weight: .heavy))
                                 .foregroundColor(DS.Colors.textPrimary)
                             Text("Type or speak while Chat is selected; Home mirrors the active Ask Agent chat.")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(panelUIFont(size: 10, weight: .semibold))
                                 .foregroundColor(DS.Colors.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
@@ -1535,15 +1555,15 @@ struct OpenClickyNotchPanelView: View {
         VStack(alignment: .leading, spacing: 7) {
             HStack {
                 Text("Cursor buddy")
-                    .font(.system(size: 12, weight: .heavy))
+                    .font(panelUIFont(size: 12, weight: .heavy))
                     .foregroundColor(DS.Colors.textSecondary)
                 Spacer()
                 Button(action: { presentHatchSheet() }) {
                     HStack(spacing: 5) {
                         Image(systemName: "sparkles")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(panelUIFont(size: 12, weight: .semibold))
                         Text("Hatch new")
-                            .font(.system(size: 10, weight: .heavy))
+                            .font(panelUIFont(size: 10, weight: .heavy))
                     }
                     .padding(.horizontal, 8)
                     .padding(.vertical, 5)
@@ -1572,11 +1592,11 @@ struct OpenClickyNotchPanelView: View {
             VStack(alignment: .leading, spacing: 3) {
                 HStack {
                     Text("Buddy size")
-                        .font(.system(size: 10, weight: .heavy))
+                        .font(panelUIFont(size: 10, weight: .heavy))
                         .foregroundColor(DS.Colors.textSecondary)
                     Spacer()
                     Text("\(Int((cursorAvatarSizeScale * 100).rounded()))%")
-                        .font(.system(size: 10, weight: .heavy, design: .rounded))
+                        .font(panelUIFont(size: 10, weight: .heavy))
                         .foregroundColor(DS.Colors.textTertiary)
                 }
 
@@ -1593,7 +1613,7 @@ struct OpenClickyNotchPanelView: View {
     private var cursorColorSection: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text("Cursor color")
-                .font(.system(size: 12, weight: .heavy))
+                .font(panelUIFont(size: 12, weight: .heavy))
                 .foregroundColor(DS.Colors.textSecondary)
 
             LazyVGrid(columns: cursorColorGridColumns, spacing: 6) {
@@ -1608,10 +1628,10 @@ struct OpenClickyNotchPanelView: View {
         Button(action: { presentHatchSheet() }) {
             VStack(spacing: 2) {
                 Image(systemName: "plus")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(panelUIFont(size: 15, weight: .semibold))
                     .foregroundColor(DS.Colors.textTertiary)
                 Text("Hatch")
-                    .font(.system(size: 9, weight: .medium))
+                    .font(panelUIFont(size: 9, weight: .medium))
                     .foregroundColor(DS.Colors.textTertiary)
             }
             .frame(width: 62, height: 44)
@@ -1712,9 +1732,9 @@ struct OpenClickyNotchPanelView: View {
     private var hatchPetSheet: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Hatch a new buddy")
-                .font(.system(size: 14, weight: .semibold))
+                .font(panelUIFont(size: 14, weight: .semibold))
             Text("Launches an Agent Mode hatch-pet session.")
-                .font(.system(size: 11))
+                .font(panelUIFont(size: 11))
                 .foregroundColor(DS.Colors.textSecondary)
             TextField("Name", text: $hatchPetName)
                 .textFieldStyle(.roundedBorder)
@@ -1757,7 +1777,7 @@ struct OpenClickyNotchPanelView: View {
                         .fill(permission.1 ? Color.green : Color.orange)
                         .frame(width: 6, height: 6)
                     Text(permission.0)
-                        .font(.system(size: 9, weight: .heavy))
+                        .font(panelUIFont(size: 9, weight: .heavy))
                         .foregroundColor(permission.1 ? DS.Colors.textPrimary : DS.Colors.textSecondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -1799,12 +1819,12 @@ struct OpenClickyNotchPanelView: View {
 
                         VStack(alignment: .leading, spacing: 2) {
                             Text(session.title)
-                                .font(.system(size: 12, weight: .heavy))
+                                .font(panelUIFont(size: 12, weight: .heavy))
                                 .foregroundColor(DS.Colors.textPrimary)
                                 .lineLimit(1)
 
                             Text(session.latestActivityDisplaySummary ?? session.statusSummaryLine)
-                                .font(.system(size: 10, weight: .medium))
+                                .font(panelUIFont(size: 10, weight: .medium))
                                 .foregroundColor(DS.Colors.textSecondary)
                                 .lineLimit(1)
                         }
@@ -1819,7 +1839,7 @@ struct OpenClickyNotchPanelView: View {
                             .padding(.vertical, max(3, subtextFontSize * 0.28))
                             .background(Capsule(style: .continuous).fill(agentStatusColor(session.status).opacity(0.14)))
                         Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 13, weight: .black))
+                            .font(panelUIFont(size: 13, weight: .black))
                             .foregroundColor(isExpanded ? DS.Colors.accentText : DS.Colors.textTertiary)
                     }
                     .padding(.vertical, 10)
@@ -1890,7 +1910,7 @@ struct OpenClickyNotchPanelView: View {
     ) -> some View {
         Button(action: action) {
             Image(systemName: systemImageName)
-                .font(.system(size: 13, weight: .black))
+                .font(panelUIFont(size: 13, weight: .black))
                 .foregroundColor(foregroundColor)
                 .frame(width: 30, height: 30)
                 .background(
@@ -1915,7 +1935,7 @@ struct OpenClickyNotchPanelView: View {
                     LazyVStack(alignment: .leading, spacing: 7) {
                         if entries.isEmpty {
                             Text("No conversation yet. Send a follow-up to talk to this OpenClicky task.")
-                                .font(.system(size: 10, weight: .semibold))
+                                .font(panelUIFont(size: 10, weight: .semibold))
                                 .foregroundColor(DS.Colors.textSecondary)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -1950,7 +1970,7 @@ struct OpenClickyNotchPanelView: View {
                                 notifyPanelSizeChanged()
                             } label: {
                                 Label("Resume task", systemImage: "arrow.clockwise.circle.fill")
-                                    .font(.system(size: 11, weight: .heavy))
+                                    .font(panelUIFont(size: 11, weight: .heavy))
                                     .foregroundColor(DS.Colors.textOnAccent)
                                     .padding(.horizontal, 10)
                                     .padding(.vertical, 7)
@@ -2007,11 +2027,11 @@ struct OpenClickyNotchPanelView: View {
 
             HStack(spacing: 8) {
                 Image(systemName: "arrowshape.turn.up.left.fill")
-                    .font(.system(size: 15, weight: .bold))
+                    .font(panelUIFont(size: 15, weight: .bold))
                     .foregroundColor(DS.Colors.accentText)
                 TextField(expandedAgentAttachments.isEmpty ? "Talk to this task…" : "Talk to this task about the attachment…", text: $expandedAgentPrompt, axis: .vertical)
                     .textFieldStyle(.plain)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(panelUIFont(size: 13, weight: .medium))
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1...5)
                     .fixedSize(horizontal: false, vertical: true)
@@ -2031,9 +2051,9 @@ struct OpenClickyNotchPanelView: View {
                 } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "paperplane.fill")
-                            .font(.system(size: 12, weight: .black))
+                            .font(panelUIFont(size: 12, weight: .black))
                         Text("Send")
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(panelUIFont(size: 11, weight: .heavy))
                     }
                     .foregroundColor(DS.Colors.textOnAccent)
                     .padding(.horizontal, 10)
@@ -2109,7 +2129,7 @@ struct OpenClickyNotchPanelView: View {
     private func connectionRow(_ row: OpenClickyNotchConnectionRow) -> some View {
         HStack(spacing: 10) {
             Image(systemName: row.systemImageName)
-                .font(.system(size: 15, weight: .heavy))
+                .font(panelUIFont(size: 15, weight: .heavy))
                 .foregroundColor(row.state.color)
                 .frame(width: 32, height: 32)
                 .background(Circle().fill(row.state.color.opacity(0.14)))
@@ -2117,7 +2137,7 @@ struct OpenClickyNotchPanelView: View {
             VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 6) {
                     Text(row.title)
-                        .font(.system(size: 12, weight: .heavy))
+                        .font(panelUIFont(size: 12, weight: .heavy))
                         .foregroundColor(DS.Colors.textPrimary)
                     Text(row.state.title)
                         .font(appUIFont(size: max(9, subtextFontSize - 2), weight: .black))
@@ -2127,7 +2147,7 @@ struct OpenClickyNotchPanelView: View {
                         .background(Capsule(style: .continuous).fill(row.state.color.opacity(0.14)))
                 }
                 Text(row.detail)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(panelUIFont(size: 10, weight: .medium))
                     .foregroundColor(DS.Colors.textSecondary)
                     .lineLimit(2)
             }
@@ -2145,16 +2165,16 @@ struct OpenClickyNotchPanelView: View {
     private func settingSummaryRow(title: String, detail: String, systemImageName: String) -> some View {
         HStack(spacing: 9) {
             Image(systemName: systemImageName)
-                .font(.system(size: 13, weight: .bold))
+                .font(panelUIFont(size: 13, weight: .bold))
                 .foregroundColor(DS.Colors.accentText)
                 .frame(width: 28, height: 28)
                 .background(Circle().fill(DS.Colors.accentText.opacity(0.12)))
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
-                    .font(.system(size: 10, weight: .heavy))
+                    .font(panelUIFont(size: 10, weight: .heavy))
                     .foregroundColor(DS.Colors.textSecondary)
                 Text(detail)
-                    .font(.system(size: 12, weight: .heavy))
+                    .font(panelUIFont(size: 12, weight: .heavy))
                     .foregroundColor(DS.Colors.textPrimary)
                     .lineLimit(1)
             }
@@ -2185,9 +2205,9 @@ struct OpenClickyNotchPanelView: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImageName)
-                    .font(.system(size: 13, weight: .black))
+                    .font(panelUIFont(size: 13, weight: .black))
                 Text(title)
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(panelUIFont(size: 11, weight: .heavy))
             }
             .foregroundColor(DS.Colors.textOnAccent)
             .lineLimit(1)
@@ -2208,9 +2228,9 @@ struct OpenClickyNotchPanelView: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: systemImageName)
-                    .font(.system(size: 13, weight: .black))
+                    .font(panelUIFont(size: 13, weight: .black))
                 Text(title)
-                    .font(.system(size: 11, weight: .heavy))
+                    .font(panelUIFont(size: 11, weight: .heavy))
             }
             .foregroundColor(DS.Colors.textPrimary)
             .lineLimit(1)
@@ -2308,14 +2328,14 @@ struct OpenClickyNotchPanelView: View {
             .overlay(
                 HStack(spacing: 8) {
                     Image(systemName: "plus.rectangle.on.folder")
-                        .font(.system(size: 15, weight: .heavy))
+                        .font(panelUIFont(size: 15, weight: .heavy))
                         .foregroundColor(DS.Colors.accentText)
                     VStack(alignment: .leading, spacing: 1) {
                         Text("Drop images or docs")
-                            .font(.system(size: 11, weight: .heavy))
+                            .font(panelUIFont(size: 11, weight: .heavy))
                             .foregroundColor(DS.Colors.textPrimary)
                         Text("OpenClicky will attach them before sending")
-                            .font(.system(size: 9, weight: .semibold))
+                            .font(panelUIFont(size: 9, weight: .semibold))
                             .foregroundColor(DS.Colors.textSecondary)
                     }
                 }
@@ -2343,7 +2363,7 @@ struct OpenClickyNotchPanelView: View {
                         }
                         Button(action: { remove(attachment) }) {
                             Image(systemName: "xmark")
-                                .font(.system(size: 8, weight: .heavy))
+                                .font(panelUIFont(size: 8, weight: .heavy))
                                 .foregroundColor(DS.Colors.textTertiary)
                         }
                         .buttonStyle(.plain)
@@ -2756,7 +2776,64 @@ private enum OpenClickyNotchConnectionState: Equatable {
     }
 }
 
+private struct OpenClickyPanelTypography {
+    let fontRawValue: String
+    let boldTextEnabled: Bool
+    let titleFontSize: CGFloat
+    let bodyFontSize: CGFloat
+    let subtextFontSize: CGFloat
+
+    private var appFont: OpenClickyResponseCaptionFont {
+        OpenClickyResponseCaptionFont.resolved(fontRawValue)
+    }
+
+    func font(size baseSize: CGFloat, weight: Font.Weight = .medium) -> Font {
+        appFont.swiftUIFont(size: scaledSize(baseSize), weight: resolvedWeight(weight))
+    }
+
+    private func scaledSize(_ baseSize: CGFloat) -> CGFloat {
+        let scale: CGFloat
+        if baseSize >= 15 {
+            scale = titleFontSize / 26.0
+        } else if baseSize >= 12 {
+            scale = bodyFontSize / 13.0
+        } else {
+            scale = subtextFontSize / 11.0
+        }
+        return max(7, baseSize * scale)
+    }
+
+    private func resolvedWeight(_ weight: Font.Weight) -> Font.Weight {
+        guard boldTextEnabled else { return weight }
+        switch weight {
+        case .regular, .medium:
+            return .semibold
+        case .semibold:
+            return .bold
+        default:
+            return weight
+        }
+    }
+}
+
+
 private struct OpenClickyNotchHeroCard<Content: View>: View {
+    @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
+    @AppStorage(AppBundleConfiguration.userAppBoldTextDefaultsKey) private var appBoldTextEnabled = false
+    @AppStorage(AppBundleConfiguration.userAppTitleFontSizeDefaultsKey) private var appTitleFontSize = 26.0
+    @AppStorage(AppBundleConfiguration.userAppBodyFontSizeDefaultsKey) private var appBodyFontSize = 13.0
+    @AppStorage(AppBundleConfiguration.userAppSubtextFontSizeDefaultsKey) private var appSubtextFontSize = 11.0
+
+    private var typography: OpenClickyPanelTypography {
+        OpenClickyPanelTypography(
+            fontRawValue: appFontRawValue,
+            boldTextEnabled: appBoldTextEnabled,
+            titleFontSize: CGFloat(appTitleFontSize),
+            bodyFontSize: CGFloat(appBodyFontSize),
+            subtextFontSize: CGFloat(appSubtextFontSize)
+        )
+    }
+
     let title: String
     let subtitle: String
     let systemImageName: String
@@ -2767,17 +2844,17 @@ private struct OpenClickyNotchHeroCard<Content: View>: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                     Image(systemName: systemImageName)
-                        .font(.system(size: 18, weight: .black))
+                        .font(typography.font(size: 18, weight: .black))
                         .foregroundColor(accent)
                         .frame(width: 38, height: 38)
                     .background(Circle().fill(accent.opacity(0.15)))
 
                 VStack(alignment: .leading, spacing: 2) {
                     Text(title)
-                        .font(.system(size: 15, weight: .black))
+                        .font(typography.font(size: 15, weight: .black))
                         .foregroundColor(DS.Colors.textPrimary)
                     Text(subtitle)
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(typography.font(size: 10, weight: .semibold))
                         .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(2)
                 }
@@ -2806,6 +2883,22 @@ private struct OpenClickyNotchHeroCard<Content: View>: View {
 }
 
 private struct OpenClickyNotchMetricCard: View {
+    @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
+    @AppStorage(AppBundleConfiguration.userAppBoldTextDefaultsKey) private var appBoldTextEnabled = false
+    @AppStorage(AppBundleConfiguration.userAppTitleFontSizeDefaultsKey) private var appTitleFontSize = 26.0
+    @AppStorage(AppBundleConfiguration.userAppBodyFontSizeDefaultsKey) private var appBodyFontSize = 13.0
+    @AppStorage(AppBundleConfiguration.userAppSubtextFontSizeDefaultsKey) private var appSubtextFontSize = 11.0
+
+    private var typography: OpenClickyPanelTypography {
+        OpenClickyPanelTypography(
+            fontRawValue: appFontRawValue,
+            boldTextEnabled: appBoldTextEnabled,
+            titleFontSize: CGFloat(appTitleFontSize),
+            bodyFontSize: CGFloat(appBodyFontSize),
+            subtextFontSize: CGFloat(appSubtextFontSize)
+        )
+    }
+
     let title: String
     let value: String
     let detail: String
@@ -2817,7 +2910,7 @@ private struct OpenClickyNotchMetricCard: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top, spacing: 8) {
                 Image(systemName: systemImageName)
-                    .font(.system(size: 13, weight: .black))
+                    .font(typography.font(size: 13, weight: .black))
                     .foregroundColor(isSelected ? .white : color)
                     .frame(width: 28, height: 28)
                     .background(Circle().fill(color.opacity(isSelected ? 0.92 : 0.13)))
@@ -2825,17 +2918,17 @@ private struct OpenClickyNotchMetricCard: View {
                 VStack(alignment: .leading, spacing: 1) {
                     HStack(alignment: .firstTextBaseline, spacing: 5) {
                         Text(value)
-                            .font(.system(size: 16, weight: .black))
+                            .font(typography.font(size: 16, weight: .black))
                             .foregroundColor(DS.Colors.textPrimary)
                             .lineLimit(1)
                         Text(title)
-                            .font(.system(size: 9, weight: .black))
+                            .font(typography.font(size: 9, weight: .black))
                             .foregroundColor(DS.Colors.textTertiary)
                             .textCase(.uppercase)
                             .lineLimit(1)
                     }
                     Text(detail)
-                        .font(.system(size: 9, weight: .semibold))
+                        .font(typography.font(size: 9, weight: .semibold))
                         .foregroundColor(DS.Colors.textSecondary)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
@@ -2884,6 +2977,23 @@ private struct OpenClickyRunningAgentIndicator: View {
 }
 
 private struct OpenClickyNotchEmptyState: View {
+    @AppStorage(AppBundleConfiguration.userAppFontDefaultsKey) private var appFontRawValue = OpenClickyResponseCaptionFont.fallback.rawValue
+    @AppStorage(AppBundleConfiguration.userAppBoldTextDefaultsKey) private var appBoldTextEnabled = false
+    @AppStorage(AppBundleConfiguration.userAppTitleFontSizeDefaultsKey) private var appTitleFontSize = 26.0
+    @AppStorage(AppBundleConfiguration.userAppBodyFontSizeDefaultsKey) private var appBodyFontSize = 13.0
+    @AppStorage(AppBundleConfiguration.userAppSubtextFontSizeDefaultsKey) private var appSubtextFontSize = 11.0
+    @AppStorage(AppBundleConfiguration.userAppLineSpacingDefaultsKey) private var appLineSpacing = 2.0
+
+    private var typography: OpenClickyPanelTypography {
+        OpenClickyPanelTypography(
+            fontRawValue: appFontRawValue,
+            boldTextEnabled: appBoldTextEnabled,
+            titleFontSize: CGFloat(appTitleFontSize),
+            bodyFontSize: CGFloat(appBodyFontSize),
+            subtextFontSize: CGFloat(appSubtextFontSize)
+        )
+    }
+
     let systemImageName: String
     let title: String
     let subtitle: String
@@ -2891,14 +3001,15 @@ private struct OpenClickyNotchEmptyState: View {
     var body: some View {
         VStack(spacing: 7) {
             Image(systemName: systemImageName)
-                .font(.system(size: 22, weight: .heavy))
+                .font(typography.font(size: 22, weight: .heavy))
                 .foregroundColor(DS.Colors.textSecondary)
             Text(title)
-                .font(.system(size: 12, weight: .heavy))
+                .font(typography.font(size: 12, weight: .heavy))
                 .foregroundColor(DS.Colors.textPrimary)
             Text(subtitle)
-                .font(.system(size: 10, weight: .medium))
+                .font(typography.font(size: 10, weight: .medium))
                 .foregroundColor(DS.Colors.textSecondary)
+                .lineSpacing(CGFloat(appLineSpacing))
                 .multilineTextAlignment(.center)
         }
         .frame(maxWidth: .infinity)
