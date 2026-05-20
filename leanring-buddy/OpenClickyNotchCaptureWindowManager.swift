@@ -731,6 +731,7 @@ final class OpenClickyNotchCaptureWindowManager {
         guard panel == nil else { return }
 
         panel = Self.makeStatusPanel(width: Self.expandedPanelWidth, height: Self.textPanelHeight)
+        refreshThemeAppearance()
     }
 
     private func ensureMainPanel() {
@@ -764,6 +765,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
         mainPanel = interfacePanel
         applyMainPanelResizeBehavior()
+        refreshThemeAppearance()
     }
 
     private func ensureCaptureContentView(width: CGFloat, height: CGFloat) {
@@ -1467,6 +1469,33 @@ final class OpenClickyNotchCaptureWindowManager {
         persistentAccentColor = accentColor
         contentView?.updateAccentColor(accentColor)
         mirroredStatusContentViews.values.forEach { $0.updateAccentColor(accentColor) }
+        refreshThemeAppearance()
+    }
+
+    private func refreshThemeAppearance() {
+        let theme = ClickyTheme.current
+        let appearanceName: NSAppearance.Name?
+        switch theme {
+        case .system:
+            appearanceName = nil
+        case .light:
+            appearanceName = .aqua
+        case .dark:
+            appearanceName = .darkAqua
+        }
+        
+        let applyToWindow = { (window: NSWindow?) in
+            guard let window else { return }
+            if let appearanceName = appearanceName {
+                window.appearance = NSAppearance(named: appearanceName)
+            } else {
+                window.appearance = nil
+            }
+        }
+        
+        applyToWindow(panel)
+        applyToWindow(mainPanel)
+        mirroredStatusPanels.values.forEach { applyToWindow($0) }
     }
 
     private static func nsAccentColor(for theme: ClickyAccentTheme?) -> NSColor {
