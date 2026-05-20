@@ -59,7 +59,7 @@ final class ThreeDViewerWindowManager: ObservableObject {
     private func makeWindow() -> NSWindow {
         let content = ThreeDViewerWindowContent()
             .frame(minWidth: 380, minHeight: 480)
-        let hosting = NSHostingController(rootView: content)
+        let hosting = NSHostingView(rootView: content)
 
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 420, height: 540),
@@ -67,13 +67,21 @@ final class ThreeDViewerWindowManager: ObservableObject {
             backing: .buffered,
             defer: false
         )
-        window.contentViewController = hosting
         window.title = "Generated 3D Models"
         window.titlebarAppearsTransparent = true
+        window.isOpaque = false
+        window.backgroundColor = .clear
         window.isReleasedWhenClosed = false
         window.level = .floating
         window.center()
         window.setFrameAutosaveName("OpenClicky.ThreeDViewerWindow")
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: hosting,
+            in: window,
+            frame: NSRect(x: 0, y: 0, width: 420, height: 540),
+            cornerRadius: 22,
+            strength: .expanded
+        )
         return window
     }
 }

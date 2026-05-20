@@ -496,7 +496,7 @@ final class WikiViewerPanelManager {
         sourceRootURL: URL?,
         onCreateMemory: CreateMemoryHandler?
     ) {
-        guard let hostingView = panel?.contentView as? NSHostingView<ClickyMemoryWindowView> else {
+        guard let hostingView: NSHostingView<ClickyMemoryWindowView> = OpenClickyLiquidGlassWindowSurface.hostingView(in: panel) else {
             return
         }
 
@@ -532,7 +532,13 @@ final class WikiViewerPanelManager {
         window.setContentSize(NSSize(width: 1180, height: 860))
         window.minSize = NSSize(width: 760, height: 520)
         window.contentMinSize = NSSize(width: 760, height: 520)
-        window.contentView = hostingView
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: hostingView,
+            in: window,
+            frame: NSRect(origin: .zero, size: NSSize(width: 1180, height: 860)),
+            cornerRadius: 22,
+            strength: .expanded
+        )
         return window
     }
 }
@@ -595,7 +601,7 @@ private struct ClickyMemoryWindowView: View {
             detailPane
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(DS.Colors.background)
+        .background(Color.clear)
     }
 
     private var sidebar: some View {
@@ -670,7 +676,11 @@ private struct ClickyMemoryWindowView: View {
                 }
             }
         }
-        .background(Color.white.opacity(0.02))
+        .glassEffect(
+            .regular.tint(DS.Colors.accent.opacity(0.045)),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .padding(10)
     }
 
     private func memoryEntryRow(_ entry: WikiViewerEntry) -> some View {

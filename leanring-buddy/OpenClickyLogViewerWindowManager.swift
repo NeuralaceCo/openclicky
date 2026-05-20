@@ -10,7 +10,7 @@ final class OpenClickyLogViewerWindowManager {
     func show() {
         if window == nil {
             createWindow()
-        } else if let hostingView = window?.contentView as? NSHostingView<OpenClickyLogViewerView> {
+        } else if let hostingView: NSHostingView<OpenClickyLogViewerView> = OpenClickyLiquidGlassWindowSurface.hostingView(in: window) {
             hostingView.rootView = OpenClickyLogViewerView()
         }
 
@@ -37,10 +37,13 @@ final class OpenClickyLogViewerWindowManager {
         logWindow.collectionBehavior.insert(.moveToActiveSpace)
         logWindow.center()
 
-        let hostingView = NSHostingView(rootView: OpenClickyLogViewerView())
-        hostingView.frame = NSRect(origin: .zero, size: windowSize)
-        hostingView.autoresizingMask = [.width, .height]
-        logWindow.contentView = hostingView
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: NSHostingView(rootView: OpenClickyLogViewerView()),
+            in: logWindow,
+            frame: NSRect(origin: .zero, size: windowSize),
+            cornerRadius: 22,
+            strength: .expanded
+        )
 
         window = logWindow
     }
@@ -200,7 +203,11 @@ struct OpenClickyLogViewerView: View {
             .padding(.bottom, 14)
         }
         .frame(width: 210)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .glassEffect(
+            .regular.tint(Color.accentColor.opacity(0.045)),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+        )
+        .padding(10)
     }
 
     private var filterBar: some View {
@@ -243,7 +250,7 @@ struct OpenClickyLogViewerView: View {
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color(nsColor: .windowBackgroundColor).opacity(0.025))
     }
 
     private var entryList: some View {
@@ -306,7 +313,7 @@ struct OpenClickyLogViewerView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(Color.clear)
     }
 
     private func header(for entry: OpenClickyLogViewerEntry) -> some View {

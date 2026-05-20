@@ -13275,9 +13275,13 @@ final class ClickyTextModeWindowManager {
                 self?.hide()
             }
         )
-        hostingView.frame = NSRect(origin: .zero, size: panelSize)
-        hostingView.autoresizingMask = [.width, .height]
-        textModePanel.contentView = hostingView
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: hostingView,
+            in: textModePanel,
+            frame: NSRect(origin: .zero, size: panelSize),
+            cornerRadius: 18,
+            strength: .compact
+        )
 
         panel = textModePanel
     }
@@ -13285,7 +13289,7 @@ final class ClickyTextModeWindowManager {
     private func preparePanel(accentTheme: ClickyAccentTheme?, submitText: @escaping (String) -> Void) {
         if panel == nil {
             createPanel(accentTheme: accentTheme, submitText: submitText)
-        } else if let hostingView = panel?.contentView as? NSHostingView<ClickyTextModeInputView> {
+        } else if let hostingView: NSHostingView<ClickyTextModeInputView> = OpenClickyLiquidGlassWindowSurface.hostingView(in: panel) {
             hostingView.rootView = ClickyTextModeInputView(
                 accentThemeOverride: accentTheme,
                 submitText: submitText,
@@ -13432,7 +13436,11 @@ private struct ClickyTextModeInputView: View {
         .frame(width: 520, height: preferredHeight)
         .background(
             RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(backgroundColor)
+                .fill(backgroundColor.opacity(0.16))
+        )
+        .glassEffect(
+            .regular.tint(backgroundColor.opacity(0.10)),
+            in: RoundedRectangle(cornerRadius: 18, style: .continuous)
         )
         .overlay(
             RoundedRectangle(cornerRadius: 18, style: .continuous)

@@ -27,7 +27,11 @@ struct MemoryDrawerView: View {
       composer
     }
     .frame(width: Self.width)
-    .background(Color(red: 0.106, green: 0.106, blue: 0.106))
+    .glassEffect(
+      .regular.tint(DS.Colors.accent.opacity(0.04)),
+      in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+    )
+    .padding(10)
   }
 
   private var header: some View {

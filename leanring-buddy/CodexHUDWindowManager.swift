@@ -125,6 +125,16 @@ final class CodexHUDWindowManager: NSObject, NSWindowDelegate {
         panel.contentMinSize = NSSize(width: OpenClickyHUDLayout.minimumWidth, height: OpenClickyHUDLayout.minimumHeight)
         let resizeContainer = OpenClickyHUDResizeContainerView(frame: NSRect(x: 0, y: 0, width: OpenClickyHUDLayout.width, height: OpenClickyHUDLayout.height))
         resizeContainer.autoresizingMask = [.width, .height]
+        let glassBackdrop = OpenClickyLiquidGlassBackdropView(cornerRadius: OpenClickyHUDLayout.cornerRadius)
+        glassBackdrop.frame = resizeContainer.bounds
+        glassBackdrop.autoresizingMask = [.width, .height]
+        glassBackdrop.configure(
+            cornerRadius: OpenClickyHUDLayout.cornerRadius,
+            roundsTopCorners: true,
+            accentColor: OpenClickyNotchCaptureWindowManager.nsAccentColor(for: nil),
+            strength: .expanded
+        )
+        resizeContainer.addSubview(glassBackdrop)
         resizeContainer.addSubview(hostingView)
         panel.contentView = resizeContainer
         panel.delegate = self
@@ -225,10 +235,7 @@ final class CodexHUDWindowManager: NSObject, NSWindowDelegate {
     }
 
     private func hudHostingView(in panel: NSPanel) -> NSHostingView<ChatWorkspaceView>? {
-        if let hostingView = panel.contentView as? NSHostingView<ChatWorkspaceView> {
-            return hostingView
-        }
-        return panel.contentView?.subviews.compactMap { $0 as? NSHostingView<ChatWorkspaceView> }.first
+        OpenClickyLiquidGlassWindowSurface.hostingView(in: panel)
     }
 }
 

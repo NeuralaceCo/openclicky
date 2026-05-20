@@ -98,8 +98,13 @@ final class CompanionResponseOverlayManager {
             rootView: CompanionResponseOverlayView(viewModel: overlayViewModel)
                 .frame(maxWidth: overlayMaxWidth)
         )
-        hostingView.frame = initialFrame
-        responseOverlayPanel.contentView = hostingView
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: hostingView,
+            in: responseOverlayPanel,
+            frame: initialFrame,
+            cornerRadius: 20,
+            strength: .compact
+        )
 
         overlayPanel = responseOverlayPanel
     }

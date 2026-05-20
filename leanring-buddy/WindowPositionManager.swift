@@ -315,7 +315,7 @@ private final class PermissionDragAssistantWindowManager {
     func show(message: String) {
         if panel == nil {
             createPanel(message: message)
-        } else if let hostingView = panel?.contentView as? NSHostingView<PermissionDragAssistantView> {
+        } else if let hostingView: NSHostingView<PermissionDragAssistantView> = OpenClickyLiquidGlassWindowSurface.hostingView(in: panel) {
             hostingView.rootView = PermissionDragAssistantView(message: message)
         }
 
@@ -341,10 +341,13 @@ private final class PermissionDragAssistantWindowManager {
         assistantPanel.isReleasedWhenClosed = false
         assistantPanel.collectionBehavior = [.canJoinAllSpaces, .stationary, .fullScreenAuxiliary]
 
-        let hostingView = NSHostingView(rootView: PermissionDragAssistantView(message: message))
-        hostingView.frame = NSRect(origin: .zero, size: panelSize)
-        hostingView.autoresizingMask = [.width, .height]
-        assistantPanel.contentView = hostingView
+        OpenClickyLiquidGlassWindowSurface.install(
+            hostingView: NSHostingView(rootView: PermissionDragAssistantView(message: message)),
+            in: assistantPanel,
+            frame: NSRect(origin: .zero, size: panelSize),
+            cornerRadius: 22,
+            strength: .compact
+        )
 
         panel = assistantPanel
     }

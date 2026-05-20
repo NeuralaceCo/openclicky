@@ -20,7 +20,7 @@ struct ConversationSidebarView: View {
   @AppStorage(AppBundleConfiguration.userAppSubtextFontSizeDefaultsKey) private var appSubtextFontSize = 11.0
 
   // ChatGPT sidebar palette
-  static let bg = Color(red: 0.106, green: 0.106, blue: 0.106)              // #1b1b1b
+  static let bg = Color.clear
   static let activeRow = Color(red: 0.176, green: 0.176, blue: 0.180)       // ~#2d2d2e
   static let textPrimary = Color(red: 0.92, green: 0.92, blue: 0.93)
   static let textSecondary = Color(red: 0.62, green: 0.62, blue: 0.64)
@@ -57,7 +57,11 @@ struct ConversationSidebarView: View {
       footer
     }
     .frame(width: Self.expandedWidth)
-    .background(Self.bg)
+    .glassEffect(
+      .regular.tint(DS.Colors.accent.opacity(0.04)),
+      in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+    )
+    .padding(10)
   }
 
   private var header: some View {

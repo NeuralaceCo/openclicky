@@ -2572,6 +2572,66 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 }
 
+@MainActor
+enum OpenClickyLiquidGlassWindowSurface {
+    @discardableResult
+    static func install<Content: View>(
+        hostingView: NSHostingView<Content>,
+        in window: NSWindow,
+        frame: NSRect,
+        cornerRadius: CGFloat,
+        roundsTopCorners: Bool = true,
+        accentColor: NSColor? = nil,
+        strength: OpenClickyLiquidGlassBackdropView.Strength = .expanded
+    ) -> OpenClickyLiquidGlassBackdropView {
+        window.isOpaque = false
+        window.backgroundColor = .clear
+
+        let containerView = NSView(frame: frame)
+        containerView.autoresizingMask = [.width, .height]
+        containerView.wantsLayer = true
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        let backdrop = OpenClickyLiquidGlassBackdropView(cornerRadius: cornerRadius)
+        backdrop.frame = containerView.bounds
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.configure(
+            cornerRadius: cornerRadius,
+            roundsTopCorners: roundsTopCorners,
+            accentColor: accentColor ?? OpenClickyNotchCaptureWindowManager.nsAccentColor(for: nil),
+            strength: strength
+        )
+        containerView.addSubview(backdrop)
+
+        hostingView.frame = containerView.bounds
+        hostingView.autoresizingMask = [.width, .height]
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        containerView.addSubview(hostingView)
+
+        window.contentView = containerView
+        return backdrop
+    }
+
+    static func hostingView<Content: View>(in window: NSWindow?) -> NSHostingView<Content>? {
+        findHostingView(in: window?.contentView)
+    }
+
+    private static func findHostingView<Content: View>(in view: NSView?) -> NSHostingView<Content>? {
+        guard let view else { return nil }
+        if let hostingView = view as? NSHostingView<Content> {
+            return hostingView
+        }
+
+        for subview in view.subviews {
+            if let hostingView: NSHostingView<Content> = findHostingView(in: subview) {
+                return hostingView
+            }
+        }
+        return nil
+    }
+}
+
 private final class OpenClickyNotchRightEdgeGradientView: NSView {
     var accentColor: NSColor = NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1.0) { didSet { needsDisplay = true } }
     var intensity: CGFloat = 0.34 { didSet { needsDisplay = true } }

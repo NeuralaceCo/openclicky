@@ -131,12 +131,20 @@ final class MiniChatPanelManager: NSObject {
     )
     panel.title = session.title
     panel.titleVisibility = .visible
-    panel.titlebarAppearsTransparent = false
+    panel.titlebarAppearsTransparent = true
+    panel.isOpaque = false
+    panel.backgroundColor = .clear
     panel.isMovableByWindowBackground = false
     panel.collectionBehavior = [.fullScreenAuxiliary]
     panel.hasShadow = true
     panel.minSize = NSSize(width: 320, height: 400)
-    panel.contentView = hosting
+    OpenClickyLiquidGlassWindowSurface.install(
+      hostingView: hosting,
+      in: panel,
+      frame: NSRect(x: 0, y: 0, width: 380, height: 520),
+      cornerRadius: 18,
+      strength: .expanded
+    )
 
     if let screen = NSScreen.main?.visibleFrame {
       let x = screen.maxX - 380 - 24
@@ -181,7 +189,10 @@ private struct MiniChatPanelView: View {
       Divider().background(Color.white.opacity(0.08))
       composer
     }
-    .background(Color(red: 0.117, green: 0.117, blue: 0.117))
+    .glassEffect(
+      .regular.tint(DS.Colors.accent.opacity(0.045)),
+      in: RoundedRectangle(cornerRadius: 18, style: .continuous)
+    )
   }
 
   private var header: some View {

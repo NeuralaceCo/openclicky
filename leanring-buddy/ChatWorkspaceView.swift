@@ -51,7 +51,7 @@ struct ChatWorkspaceView: View {
   @State private var isDropTargeted = false
 
   // OpenClicky panel palette.
-  private static let paneBg = DS.Colors.background
+  private static let paneBg = DS.Colors.background.opacity(0.10)
   private static let textPrimary = DS.Colors.textPrimary
   private static let textSecondary = DS.Colors.textSecondary
   private static let accent = DS.Colors.accentText
@@ -109,7 +109,7 @@ struct ChatWorkspaceView: View {
         composer
       }
       .frame(maxWidth: .infinity, maxHeight: .infinity)
-      .background(Self.paneBg)
+      .background(Color.clear)
 
       if memoryDrawerOpen {
         Divider().background(Color.black.opacity(0.4)).frame(width: 1)
@@ -120,7 +120,7 @@ struct ChatWorkspaceView: View {
         .transition(.move(edge: .trailing).combined(with: .opacity))
       }
     }
-    .background(Self.paneBg)
+    .background(Color.clear)
     .lineSpacing(appTextLineSpacing)
     .overlay(alignment: .center) {
       if isDropTargeted {
