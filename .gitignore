@@ -28,3 +28,4 @@ worker/.env.local
 
 # Local-only MCP server URL (port rotates between launches)
 .mcp.json
+/.antigravitycli
