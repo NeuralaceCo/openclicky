@@ -178,6 +178,7 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeFocusedAppContextDefaultsKey) private var widgetsIncludeFocusedAppContext = false
     @AppStorage(AppBundleConfiguration.userForceLiquidGlassDefaultsKey) private var forceLiquidGlass = false
+    @AppStorage(AppBundleConfiguration.userThemeDefaultsKey) private var clickyTheme = ClickyTheme.system.rawValue
     @State private var selectedSection: OpenClickySettingsSection = .general
     @State private var gogCLIStatus = OpenClickyGogCLIStatus.unknown
     @State private var isRefreshingGogCLIStatus = false
@@ -370,6 +371,35 @@ struct OpenClickySettingsView: View {
                     systemImageName: "sparkles",
                     isOn: $forceLiquidGlass
                 )
+
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Image(systemName: "circle.lefthalf.filled")
+                            .font(.system(size: 14))
+                            .foregroundColor(DS.Colors.accentText)
+                            .frame(width: 20, alignment: .center)
+                        
+                        Text("Appearance theme")
+                            .font(appUIFont(size: bodyFontSize, weight: .medium))
+                            .foregroundColor(DS.Colors.textPrimary)
+                        
+                        Spacer()
+                        
+                        Picker("", selection: $clickyTheme) {
+                            ForEach(ClickyTheme.allCases) { theme in
+                                Text(theme.title).tag(theme.rawValue)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                    Text("Choose between light glass, dark glass, or match system appearance.")
+                        .font(appUIFont(size: subtextFontSize, weight: .regular))
+                        .foregroundColor(DS.Colors.textSecondary)
+                        .padding(.leading, 28)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 11)
             }
 
             settingsGroup("Typography") {
