@@ -4,6 +4,8 @@ import SwiftUI
 @MainActor
 final class OpenClickySettingsWindowManager {
     private var window: NSWindow?
+    private var hostingView: NSHostingView<OpenClickySettingsView>?
+    private var glassBackdrop: OpenClickyLiquidGlassBackdropView?
     private let windowSize = NSSize(width: 1120, height: 760)
     private let minimumWindowSize = NSSize(width: 1040, height: 660)
     private let settingsWindowLevel = NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1)
@@ -11,7 +13,7 @@ final class OpenClickySettingsWindowManager {
     func show(companionManager: CompanionManager) {
         if window == nil {
             createWindow(companionManager: companionManager)
-        } else if let hostingView = window?.contentView as? NSHostingView<OpenClickySettingsView> {
+        } else if let hostingView {
             hostingView.rootView = OpenClickySettingsView(companionManager: companionManager)
         }
 
@@ -78,15 +80,40 @@ final class OpenClickySettingsWindowManager {
         settingsWindow.isReleasedWhenClosed = false
         settingsWindow.titlebarAppearsTransparent = true
         settingsWindow.toolbarStyle = .unified
+        settingsWindow.isOpaque = false
+        settingsWindow.backgroundColor = .clear
+        settingsWindow.hasShadow = true
         settingsWindow.level = settingsWindowLevel
         settingsWindow.collectionBehavior.insert(.moveToActiveSpace)
         settingsWindow.collectionBehavior.insert(.fullScreenAuxiliary)
         settingsWindow.center()
 
+        let containerView = NSView(frame: NSRect(origin: .zero, size: windowSize))
+        containerView.autoresizingMask = [.width, .height]
+        containerView.wantsLayer = true
+        containerView.layer?.backgroundColor = NSColor.clear.cgColor
+
+        let backdrop = OpenClickyLiquidGlassBackdropView(cornerRadius: 22)
+        backdrop.frame = containerView.bounds
+        backdrop.autoresizingMask = [.width, .height]
+        backdrop.configure(
+            cornerRadius: 22,
+            roundsTopCorners: true,
+            accentColor: OpenClickyNotchCaptureWindowManager.nsAccentColor(for: nil),
+            strength: .expanded
+        )
+        containerView.addSubview(backdrop)
+
         let hostingView = NSHostingView(rootView: OpenClickySettingsView(companionManager: companionManager))
-        hostingView.frame = NSRect(origin: .zero, size: windowSize)
+        hostingView.frame = containerView.bounds
         hostingView.autoresizingMask = [.width, .height]
-        settingsWindow.contentView = hostingView
+        hostingView.wantsLayer = true
+        hostingView.layer?.backgroundColor = NSColor.clear.cgColor
+        containerView.addSubview(hostingView)
+
+        settingsWindow.contentView = containerView
+        self.hostingView = hostingView
+        glassBackdrop = backdrop
 
         window = settingsWindow
     }
@@ -177,7 +204,8 @@ struct OpenClickySettingsView: View {
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeAgentTaskNamesDefaultsKey) private var widgetsIncludeAgentTaskNames = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeMemorySnippetsDefaultsKey) private var widgetsIncludeMemorySnippets = false
     @AppStorage(AppBundleConfiguration.userWidgetsIncludeFocusedAppContextDefaultsKey) private var widgetsIncludeFocusedAppContext = false
-    @AppStorage(AppBundleConfiguration.userForceLiquidGlassDefaultsKey) private var forceLiquidGlass = false
+    @AppStorage(AppBundleConfiguration.userGlassOpacityDefaultsKey) private var glassOpacity = 0.75
+    @AppStorage(AppBundleConfiguration.userGlassFrostingDefaultsKey) private var glassFrosting = 0.20
     @AppStorage(AppBundleConfiguration.userThemeDefaultsKey) private var clickyTheme = ClickyTheme.system.rawValue
     @State private var selectedSection: OpenClickySettingsSection = .general
     @State private var gogCLIStatus = OpenClickyGogCLIStatus.unknown
@@ -241,26 +269,29 @@ struct OpenClickySettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            sidebar
+        GlassEffectContainer(spacing: 14) {
+            HStack(spacing: 0) {
+                sidebar
 
-            Divider()
+                Divider()
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    sectionHeader
-                    selectedPanel
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 18) {
+                        sectionHeader
+                        selectedPanel
+                    }
+                    .frame(maxWidth: 760, alignment: .leading)
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
                 }
-                .frame(maxWidth: 760, alignment: .leading)
-                .padding(.horizontal, 28)
-                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color(nsColor: .windowBackgroundColor).opacity(0.03))
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(nsColor: .windowBackgroundColor))
         }
         .frame(minWidth: 1040, minHeight: 660)
         .font(appUIFont(size: bodyFontSize, weight: .regular))
         .lineSpacing(appTextLineSpacing)
+        .background(Color.clear)
         .onChange(of: selectedSection) { _, newSection in
             if newSection == .connections, !gogCLIStatus.isInstalled, !isRefreshingGogCLIStatus {
                 refreshGogCLIStatus()
@@ -303,7 +334,11 @@ struct OpenClickySettingsView: View {
             Spacer()
         }
         .frame(width: 190)
-        .background(.regularMaterial)
+        .glassEffect(
+            .regular.tint(DS.Colors.accent.opacity(0.06)),
+            in: RoundedRectangle(cornerRadius: 20, style: .continuous)
+        )
+        .padding(8)
     }
 
     private var sectionHeader: some View {
@@ -342,6 +377,52 @@ struct OpenClickySettingsView: View {
         case .app:
             return "Onboarding, support, and app-level actions."
         }
+    }
+
+    private var liquidGlassPreview: some View {
+        ZStack {
+            LinearGradient(
+                colors: [
+                    DS.Colors.accent.opacity(0.34),
+                    Color.white.opacity(0.16 + glassFrosting * 0.18),
+                    Color.black.opacity(0.18)
+                ],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            )
+            .blur(radius: 0.4 + glassFrosting * 2.4)
+
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill((DS.Colors.isDarkMode ? Color.black : Color.white).opacity(glassOpacity * 0.18))
+
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.white.opacity(0.10 + glassFrosting * 0.30), lineWidth: 1)
+
+            HStack(spacing: 10) {
+                Image(systemName: "sparkles")
+                    .font(appUIFont(size: bodyFontSize + 3, weight: .semibold))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Live glass preview")
+                        .font(appUIFont(size: bodyFontSize, weight: .semibold))
+                    Text("Opacity and frosting update immediately here and on OpenClicky panels.")
+                        .font(appUIFont(size: subtextFontSize, weight: .regular))
+                        .foregroundColor(.secondary)
+                }
+                Spacer()
+            }
+            .padding(14)
+        }
+        .frame(height: 78)
+        .glassEffect(
+            .regular.tint(DS.Colors.accent.opacity(0.04 + glassOpacity * 0.04 + glassFrosting * 0.10)),
+            in: RoundedRectangle(cornerRadius: 16, style: .continuous)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 11)
     }
 
     @ViewBuilder
@@ -385,13 +466,6 @@ struct OpenClickySettingsView: View {
                     )
                 )
 
-                toggleRow(
-                    title: "Force macOS 26 Liquid Glass",
-                    subtitle: "Simulates macOS 26 Tahoe's dynamic glass-like translucency and refracting borders.",
-                    systemImageName: "sparkles",
-                    isOn: $forceLiquidGlass
-                )
-
                 VStack(alignment: .leading, spacing: 4) {
                     HStack {
                         Image(systemName: "circle.lefthalf.filled")
@@ -420,6 +494,36 @@ struct OpenClickySettingsView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 11)
+
+                editableFieldRow(
+                    title: "Glass tint strength",
+                    subtitle: "Adjusts the native Liquid Glass tint without fading the system refraction layer.",
+                    systemImageName: "eyedropper"
+                ) {
+                    HStack(spacing: 10) {
+                        Slider(value: $glassOpacity, in: 0.1...1.0, step: 0.05)
+                        Text("\(Int((glassOpacity * 100).rounded()))%")
+                            .font(appUIFont(size: subtextFontSize, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                }
+
+                editableFieldRow(
+                    title: "Glass frosting",
+                    subtitle: "Adjusts the native Liquid Glass tint intensity used by OpenClicky glass surfaces.",
+                    systemImageName: "sparkles"
+                ) {
+                    HStack(spacing: 10) {
+                        Slider(value: $glassFrosting, in: 0.0...1.0, step: 0.05)
+                        Text("\(Int((glassFrosting * 100).rounded()))%")
+                            .font(appUIFont(size: subtextFontSize, weight: .medium))
+                            .foregroundColor(.secondary)
+                            .frame(width: 48, alignment: .trailing)
+                    }
+                }
+
+                liquidGlassPreview
             }
 
             settingsGroup("Typography") {
@@ -1584,7 +1688,11 @@ struct OpenClickySettingsView: View {
             }
             .background(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
+                    .fill(Color(nsColor: .windowBackgroundColor).opacity(0.025))
+            )
+            .glassEffect(
+                .regular.tint(DS.Colors.accent.opacity(0.035)),
+                in: RoundedRectangle(cornerRadius: 10, style: .continuous)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 10, style: .continuous)

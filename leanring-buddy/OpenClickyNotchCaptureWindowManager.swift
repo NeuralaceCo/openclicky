@@ -101,6 +101,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private var mirroredStatusPanels: [CGDirectDisplayID: OpenClickyNotchCapturePanel] = [:]
     private var mirroredStatusContentViews: [CGDirectDisplayID: OpenClickyNotchCaptureRootView] = [:]
     private var mainHostingView: NSHostingView<OpenClickyNotchPanelView>?
+    private var mainPanelGlassBackdrop: OpenClickyLiquidGlassBackdropView?
     private var mainPanelGlobalClickMonitor: Any?
     private var mainPanelLocalClickMonitor: Any?
     private var mainPanelEscapeKeyMonitor: Any?
@@ -391,6 +392,8 @@ final class OpenClickyNotchCaptureWindowManager {
         mainPanel?.orderOut(nil)
         removeMainPanelClickOutsideMonitors()
         removeMainPanelEscapeKeyMonitor()
+        mainHostingView = nil
+        mainPanelGlassBackdrop = nil
         if activeMode == .collapsedText {
             startCollapsedHoverProbe()
         }
@@ -519,6 +522,18 @@ final class OpenClickyNotchCaptureWindowManager {
             self?.mainHostingView?.needsLayout = true
             self?.clampMainPanelToVisibleScreen()
         }
+        let glassBackdrop = OpenClickyLiquidGlassBackdropView(cornerRadius: 28)
+        glassBackdrop.frame = NSRect(origin: .zero, size: initialSize)
+        glassBackdrop.autoresizingMask = [.width, .height]
+        glassBackdrop.configure(
+            cornerRadius: 28,
+            roundsTopCorners: true,
+            accentColor: Self.nsAccentColor(for: nil),
+            strength: .expanded
+        )
+        mainPanelGlassBackdrop = glassBackdrop
+        resizeContainer.addSubview(glassBackdrop)
+
         resizeContainer.addSubview(hostingView)
         mainPanel?.contentView = resizeContainer
         mainHostingView = hostingView
@@ -1469,6 +1484,14 @@ final class OpenClickyNotchCaptureWindowManager {
         persistentAccentColor = accentColor
         contentView?.updateAccentColor(accentColor)
         mirroredStatusContentViews.values.forEach { $0.updateAccentColor(accentColor) }
+        if let glassBackdrop = mainPanelGlassBackdrop {
+            glassBackdrop.configure(
+                cornerRadius: 28,
+                roundsTopCorners: true,
+                accentColor: accentColor,
+                strength: .expanded
+            )
+        }
         refreshThemeAppearance()
     }
 
@@ -1483,7 +1506,7 @@ final class OpenClickyNotchCaptureWindowManager {
         case .dark:
             appearanceName = .darkAqua
         }
-        
+
         let applyToWindow = { (window: NSWindow?) in
             guard let window else { return }
             if let appearanceName = appearanceName {
@@ -1492,7 +1515,7 @@ final class OpenClickyNotchCaptureWindowManager {
                 window.appearance = nil
             }
         }
-        
+
         applyToWindow(panel)
         applyToWindow(mainPanel)
         mirroredStatusPanels.values.forEach { applyToWindow($0) }
@@ -2392,11 +2415,6 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 }
 
-@objc(NSGlassEffectView)
-open class NSGlassEffectView: NSView {
-    // Stub class mapping to native macOS 26 Tahoe NSGlassEffectView at runtime.
-}
-
 final class OpenClickyLiquidGlassBackdropView: NSView {
     enum Strength {
         case compact
@@ -2404,66 +2422,57 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 
     static var isLiquidGlassAvailable: Bool {
-        UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey) ||
-        NSClassFromString("NSGlassEffectView") != nil
+        true
     }
 
-    private let backingView: NSView
-    private var usesLiquidGlass: Bool
-    private var simulatedLiquidGlass: Bool
+    private let glassContainerView = NSGlassEffectContainerView()
+    private let glassContentView = NSView()
+    private let glassView = NSGlassEffectView()
+    private var defaultsObserver: NSObjectProtocol?
     private let maskLayer = CAShapeLayer()
     private var cornerRadius: CGFloat
     private var roundsTopCorners = true
     private var accentColor: NSColor = .systemBlue
     private var strength: Strength = .compact
 
-    private var isDarkAppearance: Bool {
-        if #available(macOS 10.14, *) {
-            if let appearance = effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) {
-                return appearance == .darkAqua
-            }
-        }
-        return false
-    }
-
     override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
+        updateLiquidGlassState()
     }
 
     init(cornerRadius: CGFloat) {
         self.cornerRadius = cornerRadius
 
-        let forceLiquid = UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey)
-        if let glassClass = NSClassFromString("NSGlassEffectView") as? NSObject.Type,
-           let glassView = glassClass.init() as? NSView {
-            backingView = glassView
-            usesLiquidGlass = true
-            simulatedLiquidGlass = false
-        } else {
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = forceLiquid ? .popover : .hudWindow
-            visualEffectView.blendingMode = .behindWindow
-            visualEffectView.state = .active
-            backingView = visualEffectView
-            usesLiquidGlass = false
-            simulatedLiquidGlass = forceLiquid
-        }
-
         super.init(frame: .zero)
         wantsLayer = true
         layer?.masksToBounds = true
-        backingView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(backingView)
-        NSLayoutConstraint.activate([
-            backingView.topAnchor.constraint(equalTo: topAnchor),
-            backingView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            backingView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            backingView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-        applyShape()
 
-        NotificationCenter.default.addObserver(
+        glassContainerView.translatesAutoresizingMaskIntoConstraints = false
+        glassContentView.translatesAutoresizingMaskIntoConstraints = false
+        glassView.translatesAutoresizingMaskIntoConstraints = false
+        glassContainerView.contentView = glassContentView
+        glassContainerView.spacing = 8
+        glassView.style = .regular
+        glassContentView.addSubview(glassView)
+        addSubview(glassContainerView)
+
+
+        NSLayoutConstraint.activate([
+            glassContainerView.topAnchor.constraint(equalTo: topAnchor),
+            glassContainerView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            glassContainerView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            glassContainerView.bottomAnchor.constraint(equalTo: bottomAnchor),
+
+            glassView.topAnchor.constraint(equalTo: glassContentView.topAnchor),
+            glassView.leadingAnchor.constraint(equalTo: glassContentView.leadingAnchor),
+            glassView.trailingAnchor.constraint(equalTo: glassContentView.trailingAnchor),
+            glassView.bottomAnchor.constraint(equalTo: glassContentView.bottomAnchor)
+        ])
+
+        applyShape()
+        updateLiquidGlassState()
+
+        defaultsObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
             queue: .main
@@ -2477,21 +2486,18 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        if let defaultsObserver {
+            NotificationCenter.default.removeObserver(defaultsObserver)
+        }
     }
 
     private func updateLiquidGlassState() {
-        let forceLiquid = UserDefaults.standard.bool(forKey: AppBundleConfiguration.userForceLiquidGlassDefaultsKey)
-        if NSClassFromString("NSGlassEffectView") != nil {
-            usesLiquidGlass = true
-            simulatedLiquidGlass = false
-        } else {
-            usesLiquidGlass = false
-            simulatedLiquidGlass = forceLiquid
-            if let visualEffect = backingView as? NSVisualEffectView {
-                visualEffect.material = forceLiquid ? .popover : .hudWindow
-            }
-        }
+        let opacity = UserDefaults.standard.object(forKey: AppBundleConfiguration.userGlassOpacityDefaultsKey) as? Double ?? 0.75
+        let frosting = UserDefaults.standard.object(forKey: AppBundleConfiguration.userGlassFrostingDefaultsKey) as? Double ?? 0.20
+
+        glassView.style = .regular
+        glassView.cornerRadius = cornerRadius
+        glassView.tintColor = nativeGlassTint(opacity: opacity, frosting: frosting)
         needsDisplay = true
     }
 
@@ -2502,7 +2508,6 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
         self.strength = strength
         updateLiquidGlassState()
         applyShape()
-        needsDisplay = true
     }
 
     override func layout() {
@@ -2511,99 +2516,36 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        guard !usesLiquidGlass else { return }
-        let path = roundedPath(in: bounds.insetBy(dx: 0.5, dy: 0.5))
-        
-        if simulatedLiquidGlass {
-            let isDark = isDarkAppearance
-            
-            // Glass Tint Overlay (translucent frosted white reflection)
-            // In dark mode: white with 0.06 alpha.
-            // In light mode: white with 0.20 alpha (to enhance the white frost background overlay on top of popover material).
-            let tintColor = isDark ? NSColor.white.withAlphaComponent(0.06) : NSColor.white.withAlphaComponent(0.20)
-            tintColor.setFill()
-            path.fill()
-            
-            // Refracting Double Border:
-            // 1. Outer refracting border (1.0pt)
-            // In dark mode: white with 0.20 alpha.
-            // In light mode: black with 0.08 alpha (to provide dark refracting edge contrast).
-            let outerStroke = isDark ? NSColor.white.withAlphaComponent(0.20) : NSColor.black.withAlphaComponent(0.08)
-            outerStroke.setStroke()
-            path.lineWidth = 1.0
-            path.stroke()
-            
-            // 2. Inner refracting border (1.0pt, inset by 1.0pt)
-            // In dark mode: white with 0.08 alpha.
-            // In light mode: black with 0.03 alpha.
-            let innerPath = roundedPath(in: bounds.insetBy(dx: 1.5, dy: 1.5))
-            let innerStroke = isDark ? NSColor.white.withAlphaComponent(0.08) : NSColor.black.withAlphaComponent(0.03)
-            innerStroke.setStroke()
-            innerPath.lineWidth = 1.0
-            innerPath.stroke()
-            
-            // Specular Reflection / diagonal sheen highlight
-            // In dark mode: white with 0.035 alpha.
-            // In light mode: white with 0.08 alpha (requires slightly more opacity to stand out on light background).
-            let sheenColor = isDark ? NSColor.white.withAlphaComponent(0.035) : NSColor.white.withAlphaComponent(0.08)
-            let sheenPath = NSBezierPath()
-            sheenPath.move(to: NSPoint(x: bounds.minX, y: bounds.minY))
-            sheenPath.line(to: NSPoint(x: bounds.maxX, y: bounds.maxY))
-            sheenColor.setStroke()
-            sheenPath.lineWidth = 4.0
-            sheenPath.stroke()
-        } else {
-            NSColor.black.withAlphaComponent(strength == .compact ? 0.20 : 0.30).setFill()
-            path.fill()
-            if strength == .expanded {
-                accentColor.withAlphaComponent(0.08).setStroke()
-                path.lineWidth = 1
-                path.stroke()
-            }
-        }
+        // Native Liquid Glass rendering is handled by NSGlassEffectView.
     }
 
     private func applyShape() {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let path = cgPath(in: bounds)
-        maskLayer.path = path
-        layer?.mask = maskLayer
-        if #available(macOS 10.15, *) {
-            maskLayer.cornerCurve = .continuous
+
+        if roundsTopCorners {
+            layer?.mask = nil
+            layer?.cornerRadius = cornerRadius
+            if #available(macOS 10.15, *) {
+                layer?.cornerCurve = .continuous
+            }
+        } else {
+            let path = cgPath(in: bounds)
+            maskLayer.path = path
+            layer?.mask = maskLayer
+            if #available(macOS 10.15, *) {
+                maskLayer.cornerCurve = .continuous
+            }
         }
         layer?.backgroundColor = NSColor.clear.cgColor
-
-        backingView.layer?.cornerRadius = cornerRadius
-        backingView.layer?.masksToBounds = true
-        if backingView.responds(to: Selector(("setCornerRadius:"))) {
-            backingView.setValue(cornerRadius, forKey: "cornerRadius")
-        }
+        glassView.cornerRadius = cornerRadius
     }
 
-    private func roundedPath(in rect: NSRect) -> NSBezierPath {
-        guard !roundsTopCorners else {
-            return NSBezierPath(roundedRect: rect, xRadius: cornerRadius, yRadius: cornerRadius)
-        }
-
-        let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
-        let path = NSBezierPath()
-        path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + radius))
-        path.curve(
-            to: NSPoint(x: rect.maxX - radius, y: rect.minY),
-            controlPoint1: NSPoint(x: rect.maxX, y: rect.minY + radius * 0.45),
-            controlPoint2: NSPoint(x: rect.maxX - radius * 0.45, y: rect.minY)
-        )
-        path.line(to: NSPoint(x: rect.minX + radius, y: rect.minY))
-        path.curve(
-            to: NSPoint(x: rect.minX, y: rect.minY + radius),
-            controlPoint1: NSPoint(x: rect.minX + radius * 0.45, y: rect.minY),
-            controlPoint2: NSPoint(x: rect.minX, y: rect.minY + radius * 0.45)
-        )
-        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
-        path.close()
-        return path
+    private func nativeGlassTint(opacity: Double, frosting: Double) -> NSColor? {
+        let clampedFrosting = min(max(frosting, 0.0), 1.0)
+        let clampedOpacity = min(max(opacity, 0.0), 1.0)
+        let strengthBoost = strength == .expanded ? 0.03 : 0.0
+        let alpha = CGFloat(0.02 + strengthBoost + clampedOpacity * 0.04 + clampedFrosting * 0.10)
+        return accentColor.withAlphaComponent(alpha)
     }
 
     private func cgPath(in rect: NSRect) -> CGPath {

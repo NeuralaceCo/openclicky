@@ -48,7 +48,8 @@ nonisolated enum AppBundleConfiguration {
     static let userWidgetsIncludeAgentTaskNamesDefaultsKey = "openClickyWidgetsIncludeAgentTaskNames"
     static let userWidgetsIncludeMemorySnippetsDefaultsKey = "openClickyWidgetsIncludeMemorySnippets"
     static let userWidgetsIncludeFocusedAppContextDefaultsKey = "openClickyWidgetsIncludeFocusedAppContext"
-    static let userForceLiquidGlassDefaultsKey = "openClickyForceLiquidGlass"
+    static let userGlassOpacityDefaultsKey = "openClickyGlassOpacity"
+    static let userGlassFrostingDefaultsKey = "openClickyGlassFrosting"
     static let userThemeDefaultsKey = "openClickyThemeAppearance"
     static let appGroupIdentifier = "group.com.jkneen.openclicky"
 
