@@ -22,5 +22,6 @@ public protocol BrowserWorkspaceAgentDelegate: AnyObject {
     
     // Config and Models providers
     func getAnthropicAPIKey() -> String
-    func getDefaultComputerUseModelID() -> String
+    func getSelectedComputerUseModelID() -> String
+    func selectedComputerUseModelUsesAnthropic() -> Bool
 }

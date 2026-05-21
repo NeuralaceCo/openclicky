@@ -2,7 +2,7 @@
 
 Date: 2026-04-28  
 Project: `/Users/jkneen/Documents/GitHub/openclicky`  
-Primary app target source: `/Users/jkneen/Documents/GitHub/openclicky/leanring-buddy`
+Primary app target source: `/Users/jkneen/Documents/GitHub/openclicky/cursor-buddy`
 
 ## Executive Summary
 
@@ -78,7 +78,7 @@ This will improve testability and make swapping implementations easier.
 
 ### 5) Introduce clearer source layout
 
-Suggested structure under `leanring-buddy/`:
+Suggested structure under `cursor-buddy/`:
 
 - `Features/Companion/`
 - `Features/AgentMode/`

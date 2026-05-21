@@ -69,7 +69,7 @@ else
 fi
 
 # Refresh values for downstream steps.
-PROJECT="leanring-buddy.xcodeproj/project.pbxproj"
+PROJECT="cursor-buddy.xcodeproj/project.pbxproj"
 FINAL_VERSION=$(grep -m1 "MARKETING_VERSION" "$PROJECT" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d ' ')
 FINAL_BUILD=$(xcrun agvtool what-version -terse 2>/dev/null | tail -1 | tr -d ' ')
 
@@ -108,7 +108,7 @@ echo "         --title \"OpenClicky ${FINAL_VERSION}\" \\"
 echo "         --notes \"Release notes here\""
 echo ""
 echo "  2. Commit + tag + push:"
-echo "       git add appcast.xml leanring-buddy.xcodeproj/project.pbxproj"
+echo "       git add appcast.xml cursor-buddy.xcodeproj/project.pbxproj"
 echo "       git commit -m \"Release ${FINAL_VERSION} (build ${FINAL_BUILD})\""
 echo "       git tag v${FINAL_VERSION}"
 echo "       git push && git push --tags"

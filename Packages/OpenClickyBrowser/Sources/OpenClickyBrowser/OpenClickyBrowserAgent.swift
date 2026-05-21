@@ -176,7 +176,7 @@ final class OpenClickyBrowserAgentRunner {
         ]
     ]
 
-    init(apiKey: String, modelName: String = "claude-sonnet-4-6", browserModel: OpenClickyBrowserWorkspaceModelProtocol) {
+    init(apiKey: String, modelName: String, browserModel: OpenClickyBrowserWorkspaceModelProtocol) {
         self.apiKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         self.modelName = modelName
         self.browserModel = browserModel
@@ -194,9 +194,6 @@ final class OpenClickyBrowserAgentRunner {
             await runWithAgentSDK(prompt: prompt)
             return
         }
-        
-        // Append a message showing the agent is starting
-        appendAgentMessage(text: "Browser Agent starting up...")
         
         var messages: [[String: Any]] = []
         
@@ -225,9 +222,6 @@ final class OpenClickyBrowserAgentRunner {
                     "data": screenshotData.base64EncodedString()
                 ]
             ])
-            appendAgentMessage(text: "Captured page layout. Analyzing...")
-        } else {
-            appendAgentMessage(text: "Could not capture page visual layout. Continuing with DOM content only...")
         }
         
         userContentBlocks.append(["type": "text", "text": "Goal: \(prompt)"])
@@ -251,13 +245,11 @@ final class OpenClickyBrowserAgentRunner {
         
         while loopCount < maxLoops {
             loopCount += 1
-            updateAgentStatusMessage(text: "Consulting Claude (turn \(loopCount))...")
-            
             do {
                 let response = try await callClaudeAPI(systemPrompt: systemPrompt, messages: messages)
                 
                 guard let content = response["content"] as? [[String: Any]] else {
-                    appendAgentMessage(text: "Error: Received invalid response structure from Anthropic.")
+                    appendAgentMessage(text: "I couldn't complete that in the browser because the model response was invalid.")
                     break
                 }
                 
@@ -296,8 +288,6 @@ final class OpenClickyBrowserAgentRunner {
                         continue
                     }
                     
-                    updateAgentStatusMessage(text: "Executing action: \(toolName)...")
-                    
                     let toolResult = await executeTool(name: toolName, input: input)
                     
                     var resultBlock: [String: Any] = [
@@ -331,20 +321,19 @@ final class OpenClickyBrowserAgentRunner {
                     }
                     
                     toolResultBlocks.append(resultBlock)
-                    appendAgentMessage(text: "• \(toolResult.summary)")
                 }
                 
                 // Append tool results as a user turn
                 messages.append(["role": "user", "content": toolResultBlocks])
                 
             } catch {
-                appendAgentMessage(text: "API Error: \(error.localizedDescription)")
+                appendAgentMessage(text: "I couldn't complete that in the browser. Check the selected browser model/API setup and try again.")
                 break
             }
         }
         
         if loopCount >= maxLoops {
-            appendAgentMessage(text: "Browser Agent stopped: Reached maximum turn limit (\(maxLoops)).")
+            appendAgentMessage(text: "I couldn't finish that browser action within the step limit.")
         }
     }
 
@@ -585,9 +574,9 @@ final class OpenClickyBrowserAgentRunner {
     }
 
     private func updateAgentStatusMessage(text: String) {
-        Task { @MainActor in
-            self.browserModel?.updateLastAgentMessage(text: text)
-        }
+        // Browser-agent progress is intentionally not surfaced as chat bubbles.
+        // The side chat should look like normal OpenClicky chat: user prompt in,
+        // final answer or concise failure out.
     }
 
     // MARK: - Networking
@@ -651,8 +640,6 @@ final class OpenClickyBrowserAgentRunner {
     private func runWithAgentSDK(prompt: String) async {
         guard let model = browserModel else { return }
         
-        appendAgentMessage(text: "Browser Agent starting up via local Claude Agent SDK...")
-        
         var sdkHistory: [(userPlaceholder: String, assistantResponse: String)] = []
         
         var loopCount = 0
@@ -672,9 +659,6 @@ final class OpenClickyBrowserAgentRunner {
         var currentImages: [(data: Data, label: String)] = []
         if let screenshotData = await captureTabScreenshot() {
             currentImages.append((screenshotData, "current_screen"))
-            appendAgentMessage(text: "Captured page layout. Analyzing...")
-        } else {
-            appendAgentMessage(text: "Could not capture page visual layout. Continuing with DOM content only...")
         }
         
         let sdkSystemPrompt = """
@@ -715,8 +699,6 @@ final class OpenClickyBrowserAgentRunner {
         
         while loopCount < maxLoops {
             loopCount += 1
-            updateAgentStatusMessage(text: "Consulting Claude via Agent SDK (turn \(loopCount))...")
-            
             do {
                 let responseText = try await model.analyzeImageWithAgentSDK(
                     images: currentImages,
@@ -736,9 +718,7 @@ final class OpenClickyBrowserAgentRunner {
                     let toolName = toolCall.name
                     let input = toolCall.input
                     
-                    updateAgentStatusMessage(text: "Executing action: \(toolName)...")
                     let toolResult = await executeTool(name: toolName, input: input)
-                    appendAgentMessage(text: "• \(toolResult.summary)")
                     
                     // Capture a new screenshot for the next step
                     currentImages.removeAll()
@@ -754,13 +734,13 @@ final class OpenClickyBrowserAgentRunner {
                 }
                 
             } catch {
-                appendAgentMessage(text: "Agent SDK Error: \(error.localizedDescription)")
+                appendAgentMessage(text: "I couldn't complete that in the browser. Check the selected browser model/API setup and try again.")
                 break
             }
         }
         
         if loopCount >= maxLoops {
-            appendAgentMessage(text: "Browser Agent stopped: Reached maximum turn limit (\(maxLoops)).")
+            appendAgentMessage(text: "I couldn't finish that browser action within the step limit.")
         }
     }
 

@@ -154,7 +154,7 @@ Widgets should open OpenClicky to the relevant window:
 - `openclicky://logs`
 - `openclicky://memory`
 
-Add URL handling in `leanring_buddyApp.swift` or app delegate equivalent and route through `CompanionManager`.
+Add URL handling in `cursor_buddyApp.swift` or app delegate equivalent and route through `CompanionManager`.
 
 ## Privacy
 

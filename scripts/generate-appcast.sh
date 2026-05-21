@@ -25,7 +25,7 @@ if [[ -z "$DMG_PATH" || ! -f "$DMG_PATH" ]]; then
     exit 64
 fi
 
-PROJECT="leanring-buddy.xcodeproj/project.pbxproj"
+PROJECT="cursor-buddy.xcodeproj/project.pbxproj"
 VERSION=$(grep -m1 "MARKETING_VERSION" "$PROJECT" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d ' ')
 BUILD=$(xcrun agvtool what-version -terse 2>/dev/null | tail -1 | tr -d ' ')
 MINIMUM_MACOS=$(grep -m1 "MACOSX_DEPLOYMENT_TARGET" "$PROJECT" | sed -E 's/.*MACOSX_DEPLOYMENT_TARGET = ([^;]+);.*/\1/' | tr -d ' ')
@@ -39,7 +39,7 @@ fi
 # fall back to any sign_update on disk, or Homebrew.
 find_sign_update() {
     local hit
-    hit=$(find ~/Library/Developer/Xcode/DerivedData -path '*leanring*' -name sign_update -not -path '*old_dsa_scripts*' -type f 2>/dev/null | head -1)
+    hit=$(find ~/Library/Developer/Xcode/DerivedData -path '*cursor*' -name sign_update -not -path '*old_dsa_scripts*' -type f 2>/dev/null | head -1)
     if [[ -n "$hit" ]]; then echo "$hit"; return; fi
     hit=$(find ~/Library/Developer/Xcode/DerivedData -name sign_update -not -path '*old_dsa_scripts*' -type f 2>/dev/null | head -1)
     if [[ -n "$hit" ]]; then echo "$hit"; return; fi
@@ -65,7 +65,7 @@ if [[ -z "$ED_SIG" || -z "$LENGTH" ]]; then
     echo "" >&2
     echo "If this is your first release, generate the keypair once:" >&2
     echo "  $SIGN_UPDATE --generate-keypair" >&2
-    echo "Then update SUPublicEDKey in leanring-buddy/Info.plist with the printed public key." >&2
+    echo "Then update SUPublicEDKey in cursor-buddy/Info.plist with the printed public key." >&2
     exit 1
 fi
 
@@ -102,6 +102,6 @@ echo "appcast.xml now points at: ${DOWNLOAD_URL}"
 echo ""
 echo "Next steps:"
 echo "  1. Upload ${DMG_PATH} to the GitHub release v${VERSION} (or whatever host the URL points at)."
-echo "  2. git add appcast.xml leanring-buddy.xcodeproj/project.pbxproj"
+echo "  2. git add appcast.xml cursor-buddy.xcodeproj/project.pbxproj"
 echo "  3. git commit -m \"Release ${VERSION} (build ${BUILD})\""
 echo "  4. git tag v${VERSION} && git push && git push --tags"

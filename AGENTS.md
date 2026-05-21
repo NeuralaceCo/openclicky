@@ -5,7 +5,7 @@
 1. Check model validity before making assumptions about current model releases or identifiers.
 2. Never use emoji unless the user explicitly asks for them.
 3. Do not run `xcodebuild` from the terminal. Use Xcode for app builds and permission testing.
-4. Do not rename the legacy `leanring-buddy` project folder or scheme unless the user explicitly asks.
+4. Do not rename the legacy `cursor-buddy` project folder or scheme unless the user explicitly asks.
 
 ## Overview
 
@@ -30,15 +30,15 @@ The product identity is OpenClicky:
 
 ## Key Files
 
-- `leanring-buddy/leanring_buddyApp.swift`: app entry point and delegate hookup.
-- `leanring-buddy/CompanionManager.swift`: central app state machine for voice, screen capture, Claude, TTS, overlay, settings, and Agent Mode.
-- `leanring-buddy/MenuBarPanelManager.swift`: menu-bar item and floating panel lifecycle.
-- `leanring-buddy/CompanionPanelView.swift`: main OpenClicky panel and settings subscreen.
-- `leanring-buddy/OverlayWindow.swift`: cursor overlay, agent dock icons, captions, and response cards.
-- `leanring-buddy/CodexHUDWindowManager.swift`: Agent Mode dashboard window.
-- `leanring-buddy/CodexHomeManager.swift`: prepares the local Codex home using OpenClicky bundled resources.
-- `leanring-buddy/ClickyCodexConfigTemplate.swift`: renders Codex configuration for OpenClicky Agent Mode.
-- `leanring-buddy/ClickyNextStageParityModels.swift`: knowledge index, permission guide, response-card, and handoff support models.
+- `cursor-buddy/cursor_buddyApp.swift`: app entry point and delegate hookup.
+- `cursor-buddy/CompanionManager.swift`: central app state machine for voice, screen capture, Claude, TTS, overlay, settings, and Agent Mode.
+- `cursor-buddy/MenuBarPanelManager.swift`: menu-bar item and floating panel lifecycle.
+- `cursor-buddy/CompanionPanelView.swift`: main OpenClicky panel and settings subscreen.
+- `cursor-buddy/OverlayWindow.swift`: cursor overlay, agent dock icons, captions, and response cards.
+- `cursor-buddy/CodexHUDWindowManager.swift`: Agent Mode dashboard window.
+- `cursor-buddy/CodexHomeManager.swift`: prepares the local Codex home using OpenClicky bundled resources.
+- `cursor-buddy/ClickyCodexConfigTemplate.swift`: renders Codex configuration for OpenClicky Agent Mode.
+- `cursor-buddy/ClickyNextStageParityModels.swift`: knowledge index, permission guide, response-card, and handoff support models.
 - `AppResources/OpenClicky/`: bundled Agent Mode instructions, skills, wiki seed, runtime, and completion sound.
 
 ## Configuration

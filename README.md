@@ -40,14 +40,14 @@ Clicky prefers structured routes over visible UI whenever possible:
 
 ## Repository Layout
 
-- `leanring-buddy.xcodeproj` and `leanring-buddy/` contain the macOS app target.
-- `leanring-buddyTests/` contains focused app tests.
-- `leanring-buddyUITests/` contains UI test scaffolding.
+- `cursor-buddy.xcodeproj` and `cursor-buddy/` contain the macOS app target.
+- `cursor-buddyTests/` contains focused app tests.
+- `cursor-buddyUITests/` contains UI test scaffolding.
 - `AppResources/OpenClicky/` contains bundled model instructions, skills, wiki seed, Codex runtime, and completion audio.
 - `appcast.xml`, `clicky-demo.gif`, and `dmg-background.png` support distribution and release packaging.
 - `docs/APP_UPDATES.md` documents the Sparkle update feed and direct-distribution release flow.
 
-The legacy `leanring-buddy` folder and scheme names are kept for project continuity. The product, bundle display name, and app identity are OpenClicky.
+The legacy `cursor-buddy` folder and scheme names are kept for project continuity. The product, bundle display name, and app identity are OpenClicky.
 
 ## Secrets
 
@@ -87,12 +87,12 @@ The repo `.gitignore` excludes `.env` and `.env.local`, but the app no longer re
 Open the project in Xcode:
 
 ```sh
-open leanring-buddy.xcodeproj
+open cursor-buddy.xcodeproj
 ```
 
 In Xcode:
 
-1. Select the `leanring-buddy` scheme.
+1. Select the `cursor-buddy` scheme.
 2. Select the OpenClicky app target.
 3. Set your signing team.
 4. Run the app with `Cmd+R`.
@@ -234,7 +234,7 @@ Write actions such as sending email, posting Chat messages, modifying Drive file
 
 ## Swift SDK Embedding (Windowed)
 
-For Swift hosts that want an in-window OpenClicky instance that is separate from the OS-level menu-bar companion, use `OpenClickySDKSession` from `leanring-buddy/OpenClickySDK.swift`.
+For Swift hosts that want an in-window OpenClicky instance that is separate from the OS-level menu-bar companion, use `OpenClickySDKSession` from `cursor-buddy/OpenClickySDK.swift`.
 
 Example:
 

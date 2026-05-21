@@ -24,7 +24,7 @@ Before the first real OpenClicky release, confirm that the Sparkle private key f
 ## Release Flow
 
 1. Bump `MARKETING_VERSION` and `CURRENT_PROJECT_VERSION` in Xcode.
-2. Archive the app in Xcode with the `leanring-buddy` scheme.
+2. Archive the app in Xcode with the `cursor-buddy` scheme.
 3. Export a Developer ID signed app for direct distribution.
 4. Package the exported `.app` into a DMG.
 5. Notarize and staple the DMG.

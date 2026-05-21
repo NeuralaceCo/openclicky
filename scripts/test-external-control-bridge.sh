@@ -35,16 +35,16 @@ PY
 printf '== Swift parse checks ==\n'
 cd "$ROOT_DIR"
 xcrun swiftc -parse \
-  leanring-buddy/OpenClickyExternalControlBridge.swift \
-  leanring-buddy/CompanionManager.swift \
-  leanring-buddy/OverlayWindow.swift \
-  leanring-buddy/CodexAgentSession.swift
+  cursor-buddy/OpenClickyExternalControlBridge.swift \
+  cursor-buddy/CompanionManager.swift \
+  cursor-buddy/OverlayWindow.swift \
+  cursor-buddy/CodexAgentSession.swift
 pass 'swiftc -parse changed bridge/overlay/session files'
 
 # Typecheck the app sources without launching/building the app. The project uses
 # bare slash regex literals, so pass the same frontend capability here.
 xcrun swiftc -enable-bare-slash-regex -typecheck \
-  $(find leanring-buddy -maxdepth 1 -name '*.swift' ! -name 'leanring_buddyApp.swift' | sort)
+  $(find cursor-buddy -maxdepth 1 -name '*.swift' ! -name 'cursor_buddyApp.swift' | sort)
 pass 'swiftc -typecheck app Swift sources (no xcodebuild)'
 
 printf '\n== Bridge health ==\n'

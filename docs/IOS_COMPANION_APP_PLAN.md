@@ -366,11 +366,11 @@ Exit criteria:
 
 Likely new files:
 
-- `leanring-buddy/OpenClickyCompanionBridgeServer.swift`
-- `leanring-buddy/OpenClickyCompanionPairingStore.swift`
-- `leanring-buddy/OpenClickyCompanionModels.swift`
-- `leanring-buddy/OpenClickyCompanionSnapshotStore.swift`
-- `leanring-buddy/OpenClickyCompanionSettingsView.swift`
+- `cursor-buddy/OpenClickyCompanionBridgeServer.swift`
+- `cursor-buddy/OpenClickyCompanionPairingStore.swift`
+- `cursor-buddy/OpenClickyCompanionModels.swift`
+- `cursor-buddy/OpenClickyCompanionSnapshotStore.swift`
+- `cursor-buddy/OpenClickyCompanionSettingsView.swift`
 - `OpenClickyCompanion/` or a new Xcode iOS target folder.
 
 Likely existing files to extend:
@@ -379,7 +379,7 @@ Likely existing files to extend:
 - `CodexAgentSession.swift` for sanitized companion transcript summaries if needed.
 - `OpenClickyWidgetStateStore.swift` for shared stats/attention conversion.
 - `OpenClickySettingsWindowManager.swift` for paired-device settings.
-- `leanring_buddyApp.swift` for deep links and bridge lifecycle.
+- `cursor_buddyApp.swift` for deep links and bridge lifecycle.
 - `README.md` with companion setup once the feature exists.
 
 ## MVP Cut

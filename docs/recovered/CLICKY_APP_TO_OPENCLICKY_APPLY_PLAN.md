@@ -2,7 +2,7 @@
 
 Scope: map recovered Clicky.app Swift/UI contracts into the live OpenClicky repo at `/Users/jkneen/clawd/github/openclicky` without copying proprietary implementation.
 
-Repo identity verified from `AGENTS.md` and `README.md`: OpenClicky native macOS app, bundle id `com.jkneen.openclicky`, legacy `leanring-buddy` folder/scheme preserved.
+Repo identity verified from `AGENTS.md` and `README.md`: OpenClicky native macOS app, bundle id `com.jkneen.openclicky`, legacy `cursor-buddy` folder/scheme preserved.
 
 Current git state at inspection: `main...origin/main [ahead 6]` with existing modified/untracked skill-resource files. This plan is a sidecar only; no source files are intentionally changed by it.
 
@@ -10,18 +10,18 @@ Current git state at inspection: `main...origin/main [ahead 6]` with existing mo
 
 OpenClicky already has these recovered Clicky-lineage files or equivalents:
 
-- `leanring-buddy/CompanionManager.swift`
-- `leanring-buddy/CompanionPanelView.swift`
-- `leanring-buddy/MenuBarPanelManager.swift`
-- `leanring-buddy/OverlayWindow.swift`
-- `leanring-buddy/CodexHUDWindowManager.swift`
-- `leanring-buddy/CodexAgentSession.swift`
-- `leanring-buddy/DesignSystem.swift`
-- `leanring-buddy/ClickyNextStageParityModels.swift`
-- `leanring-buddy/ClickyNextStageParityViews.swift`
-- `leanring-buddy/OpenClickySettingsWindowManager.swift`
-- `leanring-buddy/OpenClickyComputerUseRuntime.swift`
-- `leanring-buddy/OpenClickyExternalControlBridge.swift`
+- `cursor-buddy/CompanionManager.swift`
+- `cursor-buddy/CompanionPanelView.swift`
+- `cursor-buddy/MenuBarPanelManager.swift`
+- `cursor-buddy/OverlayWindow.swift`
+- `cursor-buddy/CodexHUDWindowManager.swift`
+- `cursor-buddy/CodexAgentSession.swift`
+- `cursor-buddy/DesignSystem.swift`
+- `cursor-buddy/ClickyNextStageParityModels.swift`
+- `cursor-buddy/ClickyNextStageParityViews.swift`
+- `cursor-buddy/OpenClickySettingsWindowManager.swift`
+- `cursor-buddy/OpenClickyComputerUseRuntime.swift`
+- `cursor-buddy/OpenClickyExternalControlBridge.swift`
 - `AppResources/OpenClicky/OpenClickyBundledSkills/`
 
 Recovered source markers found existing exactly: 16 / 65. OpenClicky has 74 Swift files total.
@@ -44,8 +44,8 @@ Recovered Clicky components:
 
 OpenClicky target:
 
-- Possible new clean-room file: `leanring-buddy/OpenClickyCompactHUDView.swift`
-- Existing host/wiring candidates: `leanring-buddy/CodexHUDWindowManager.swift` and `leanring-buddy/MenuBarPanelManager.swift`
+- Possible new clean-room file: `cursor-buddy/OpenClickyCompactHUDView.swift`
+- Existing host/wiring candidates: `cursor-buddy/CodexHUDWindowManager.swift` and `cursor-buddy/MenuBarPanelManager.swift`
 - Existing state: `CompanionManager`, `CodexAgentSession`, `DesignSystem`
 
 Apply as OpenClicky-native compact HUD, not a Clicky-branded notch clone. Start with three tabs/views:
@@ -66,7 +66,7 @@ Recovered helper contracts to preserve structurally:
 
 OpenClicky target:
 
-- `leanring-buddy/ChatWorkspaceView.swift`
+- `cursor-buddy/ChatWorkspaceView.swift`
 
 Current state:
 
@@ -84,9 +84,9 @@ Apply:
 
 OpenClicky target:
 
-- `leanring-buddy/CodexHUDWindowManager.swift`
-- `leanring-buddy/ChatWorkspaceView.swift`
-- `leanring-buddy/CodexAgentSession.swift`
+- `cursor-buddy/CodexHUDWindowManager.swift`
+- `cursor-buddy/ChatWorkspaceView.swift`
+- `cursor-buddy/CodexAgentSession.swift`
 
 Apply:
 
@@ -101,10 +101,10 @@ This is one of the strongest direct ports because recovered helpers map cleanly 
 
 OpenClicky target:
 
-- `leanring-buddy/OpenClickySettingsWindowManager.swift`
-- `leanring-buddy/OpenClickyAgentsSettingsSection.swift`
-- `leanring-buddy/OpenClickyAutomationsSettingsSection.swift`
-- `leanring-buddy/CodexAgentModePanelSection.swift`
+- `cursor-buddy/OpenClickySettingsWindowManager.swift`
+- `cursor-buddy/OpenClickyAgentsSettingsSection.swift`
+- `cursor-buddy/OpenClickyAutomationsSettingsSection.swift`
+- `cursor-buddy/CodexAgentModePanelSection.swift`
 
 Apply:
 
@@ -197,39 +197,39 @@ Apply:
 
 Files:
 
-- `leanring-buddy/ChatWorkspaceView.swift`
-- maybe `leanring-buddy/CodexAgentSession.swift`
+- `cursor-buddy/ChatWorkspaceView.swift`
+- maybe `cursor-buddy/CodexAgentSession.swift`
 
 Why first: smallest visible improvement; directly maps recovered `NotchTextInputSurface` helpers into existing real UI.
 
 Verification:
 
 ```sh
-swiftc -parse leanring-buddy/ChatWorkspaceView.swift
+swiftc -parse cursor-buddy/ChatWorkspaceView.swift
 ```
 
 ### Burst 2: Agent activity/thread row components
 
 Files:
 
-- `leanring-buddy/CodexHUDWindowManager.swift`
-- optional new `leanring-buddy/OpenClickyAgentActivityViews.swift`
+- `cursor-buddy/CodexHUDWindowManager.swift`
+- optional new `cursor-buddy/OpenClickyAgentActivityViews.swift`
 
 Why second: high parity value from `NotchAgentsTab` and existing session model.
 
 Verification:
 
 ```sh
-swiftc -parse leanring-buddy/OpenClickyAgentActivityViews.swift leanring-buddy/CodexHUDWindowManager.swift
+swiftc -parse cursor-buddy/OpenClickyAgentActivityViews.swift cursor-buddy/CodexHUDWindowManager.swift
 ```
 
 ### Burst 3: Permissions page polish
 
 Files:
 
-- `leanring-buddy/ClickyNextStageParityViews.swift`
-- `leanring-buddy/OpenClickySettingsWindowManager.swift`
-- optional new `leanring-buddy/OpenClickyAgentPermissionsPage.swift`
+- `cursor-buddy/ClickyNextStageParityViews.swift`
+- `cursor-buddy/OpenClickySettingsWindowManager.swift`
+- optional new `cursor-buddy/OpenClickyAgentPermissionsPage.swift`
 
 Why third: high user trust value and low product-risk.
 
@@ -237,9 +237,9 @@ Why third: high user trust value and low product-risk.
 
 Files:
 
-- new `leanring-buddy/OpenClickyCompactHUDView.swift`
-- `leanring-buddy/CodexHUDWindowManager.swift`
-- `leanring-buddy/MenuBarPanelManager.swift`
+- new `cursor-buddy/OpenClickyCompactHUDView.swift`
+- `cursor-buddy/CodexHUDWindowManager.swift`
+- `cursor-buddy/MenuBarPanelManager.swift`
 
 Why fourth: bigger UX change; should come after reusable pieces exist.
 

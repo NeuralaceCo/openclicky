@@ -40,8 +40,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 # --- Configuration ---------------------------------------------------------
-SCHEME="leanring-buddy"
-PROJECT="leanring-buddy.xcodeproj"
+SCHEME="cursor-buddy"
+PROJECT="cursor-buddy.xcodeproj"
 APP_NAME="OpenClicky"
 BUNDLE_ID="com.jkneen.openclicky"
 TEAM_ID="SW75ZJJ5R6"
@@ -83,7 +83,7 @@ done
 
 # Read defaults from the Xcode project if not overridden.
 if [[ -z "$VERSION" ]]; then
-    VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" leanring-buddy/Info.plist 2>/dev/null \
+    VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" cursor-buddy/Info.plist 2>/dev/null \
         || grep -m1 "MARKETING_VERSION" "${PROJECT}/project.pbxproj" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d ' ')
 fi
 if [[ -z "$BUILD_NUMBER" ]]; then

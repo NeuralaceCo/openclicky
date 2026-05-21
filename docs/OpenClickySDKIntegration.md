@@ -15,14 +15,14 @@
 
 In the host app target, add Swift sources from this repo:
 
-- `leanring-buddy/OpenClickySDK.swift` **(required)**
-- `leanring-buddy/CompanionManager.swift`
-- `leanring-buddy/CompanionPanelView.swift`
-- all dependent files in `leanring-buddy/` used by those two files (including Codex/agent, model, overlay, and settings managers).
+- `cursor-buddy/OpenClickySDK.swift` **(required)**
+- `cursor-buddy/CompanionManager.swift`
+- `cursor-buddy/CompanionPanelView.swift`
+- all dependent files in `cursor-buddy/` used by those two files (including Codex/agent, model, overlay, and settings managers).
 
-For a first pass, easiest is to include the full `leanring-buddy/*.swift` folder and **exclude only**:
+For a first pass, easiest is to include the full `cursor-buddy/*.swift` folder and **exclude only**:
 
-- `leanring-buddy/leanring_buddyApp.swift` (menu-bar app entrypoint)
+- `cursor-buddy/cursor_buddyApp.swift` (menu-bar app entrypoint)
 - optional: any files intended only for the menu-bar launch surface you explicitly want to omit
 
 ## 2) Ensure resources are in the host bundle

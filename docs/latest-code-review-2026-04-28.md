@@ -4,13 +4,13 @@ Repo: `/Users/jkneen/Documents/GitHub/openclicky`
 Branch: `main` (working tree changes)
 
 ## Files reviewed
-- `leanring-buddy/ClaudeAgentSDKAPI.swift`
-- `leanring-buddy/CodexRuntimeLocator.swift`
-- `leanring-buddy/CompanionManager.swift`
-- `leanring-buddy/MenuBarPanelManager.swift`
-- `leanring-buddy/OpenClickySDK.swift`
-- `leanring-buddy/OverlayWindow.swift`
-- `leanring-buddy/WindowPositionManager.swift`
+- `cursor-buddy/ClaudeAgentSDKAPI.swift`
+- `cursor-buddy/CodexRuntimeLocator.swift`
+- `cursor-buddy/CompanionManager.swift`
+- `cursor-buddy/MenuBarPanelManager.swift`
+- `cursor-buddy/OpenClickySDK.swift`
+- `cursor-buddy/OverlayWindow.swift`
+- `cursor-buddy/WindowPositionManager.swift`
 
 ## Validation run
 - `swiftc -parse` on all changed Swift files: **passed**
@@ -18,7 +18,7 @@ Branch: `main` (working tree changes)
 ## Findings
 
 ### 1) High — potential crash from force-casts in AX code
-**File:** `leanring-buddy/WindowPositionManager.swift`
+**File:** `cursor-buddy/WindowPositionManager.swift`
 
 The updated AX extraction now force-casts:
 - `focusedWindowValue as! AXUIElement`
@@ -33,8 +33,8 @@ If accessibility APIs return unexpected CF types, this can crash at runtime.
 
 ### 2) Medium — thinking-dot tasks can accumulate
 **Files:**
-- `leanring-buddy/MenuBarPanelManager.swift` (`AgentMenuBarThinkingDots`)
-- `leanring-buddy/OverlayWindow.swift` (`ClickyThinkingDots`)
+- `cursor-buddy/MenuBarPanelManager.swift` (`AgentMenuBarThinkingDots`)
+- `cursor-buddy/OverlayWindow.swift` (`ClickyThinkingDots`)
 
 Each view starts a looped `Task` in `onAppear`, but there is no stored handle and explicit `onDisappear` cancellation. Repeated appearance cycles can stack tasks.
 
@@ -43,7 +43,7 @@ Each view starts a looped `Task` in `onAppear`, but there is no stored handle an
 ---
 
 ### 3) Medium — cursor polling now fully MainActor-bound
-**File:** `leanring-buddy/OverlayWindow.swift`
+**File:** `cursor-buddy/OverlayWindow.swift`
 
 Cursor tracking moved from background dispatch timer to a `Task { @MainActor ... }` loop sampling every ~16ms. Under main-thread pressure (streaming + animation), this may regress cursor smoothness.
 

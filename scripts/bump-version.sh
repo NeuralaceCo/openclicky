@@ -14,7 +14,7 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-PROJECT="leanring-buddy.xcodeproj/project.pbxproj"
+PROJECT="cursor-buddy.xcodeproj/project.pbxproj"
 
 current_marketing() {
     grep -m1 "MARKETING_VERSION" "$PROJECT" | sed -E 's/.*MARKETING_VERSION = ([^;]+);.*/\1/' | tr -d ' '

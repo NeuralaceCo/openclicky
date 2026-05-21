@@ -1,6 +1,6 @@
 //
 //  OpenClickyBrowserWorkspaceWindowManager.swift
-//  leanring-buddy
+//  cursor-buddy
 //
 //  Prototype browser workspace: a WebKit page canvas with an OpenClicky chat
 //  side panel docked on the right. This intentionally starts as a narrow shell
@@ -501,7 +501,6 @@ private struct OpenClickyBrowserWorkspaceView: View {
     private var chatPanel: some View {
         VStack(alignment: .leading, spacing: 10) {
             chatHeader
-            contextStrip
 
             GeometryReader { proxy in
                 ScrollView {
@@ -1881,10 +1880,11 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
         }
 
         if !Self.needsBackgroundAgent(prompt) {
-            let hasSDK = self.hasAgentSDK()
+            let modelID = delegate?.getSelectedComputerUseModelID() ?? ""
+            let usesAnthropicBrowserModel = delegate?.selectedComputerUseModelUsesAnthropic() ?? false
+            let hasSDK = usesAnthropicBrowserModel && self.hasAgentSDK()
             let apiKey = delegate?.getAnthropicAPIKey() ?? ""
-            if hasSDK || !apiKey.isEmpty {
-                let modelID = delegate?.getDefaultComputerUseModelID() ?? ""
+            if usesAnthropicBrowserModel && (hasSDK || !apiKey.isEmpty) {
                 isRunningBrowserPlan = true
                 Task {
                     let agent = OpenClickyBrowserAgentRunner(apiKey: apiKey, modelName: modelID, browserModel: self)
@@ -1894,10 +1894,14 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
                     }
                 }
             } else {
+                if !modelID.isEmpty && !usesAnthropicBrowserModel {
+                    startLinkedAgentTask(for: prompt, specialist: specialist)
+                    return
+                }
                 messages.append(
                     OpenClickyBrowserChatMessage(
                         role: "OpenClicky",
-                        text: inlineBrowserReply(for: prompt) + "\n\n(Tip: Ensure the Claude Agent SDK is installed locally, or configure ANTHROPIC_API_KEY in settings to enable the fully autonomous CUA Browser Agent.)",
+                        text: inlineBrowserReply(for: prompt) + "\n\n(Tip: choose a GPT/Codex computer-use model to route through Agent Mode, or configure the selected provider for the inline browser agent.)",
                         isUser: false
                     )
                 )
@@ -1905,6 +1909,10 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
             return
         }
 
+        startLinkedAgentTask(for: prompt, specialist: specialist)
+    }
+
+    private func startLinkedAgentTask(for prompt: String, specialist: OpenClickyBrowserSpecialist) {
         let agentPrompt = browserScopedAgentPrompt(userPrompt: prompt, specialist: specialist)
         if let linkedAgentSessionID, delegate?.hasLinkedAgentSession(id: linkedAgentSessionID) == true {
             delegate?.selectCodexAgentSession(linkedAgentSessionID)

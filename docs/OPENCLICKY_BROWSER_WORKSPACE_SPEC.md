@@ -270,7 +270,7 @@ Start with a narrow, non-invasive prototype: one new browser workspace window, o
 
 ## Prototype status - 2026-05-20
 
-Implemented in `leanring-buddy/OpenClickyBrowserWorkspaceWindowManager.swift` and opened from the app menu with Browser Workspace / Command-Option-B after rebuild.
+Implemented in `cursor-buddy/OpenClickyBrowserWorkspaceWindowManager.swift` and opened from the app menu with Browser Workspace / Command-Option-B after rebuild.
 
 Current prototype covers:
 

@@ -32,7 +32,7 @@ Clicky is a voice-first AI assistant that lives in the macOS menu bar. Users pre
 | Display Name | Clicky |
 | URL Scheme | `clicky://` (for OAuth callbacks) |
 | Developer | Human Songs (Farza Majeed) |
-| Internal Codename | `leanring-buddy` |
+| Internal Codename | `cursor-buddy` |
 
 ---
 
@@ -344,7 +344,7 @@ Clicky is a voice-first AI assistant that lives in the macOS menu bar. Users pre
 The original project contains 53 Swift source files, organized as a flat module:
 
 **Core Application:**
-- `leanring_buddyApp.swift` — App entry point, `@main`
+- `cursor_buddyApp.swift` — App entry point, `@main`
 - `AppBundleConfiguration.swift` — Build/config metadata
 - `GeneratedAssetSymbols.swift` — Auto-generated asset references
 
@@ -833,7 +833,7 @@ SkillName/
 ### 10.1 Xcode Configuration
 
 ```
-Project: leanring-buddy.xcodeproj
+Project: cursor-buddy.xcodeproj
 Target: Clicky (macOS App)
 Minimum Deployment: macOS 14.2
 Architectures: arm64, x86_64 (Universal)
@@ -1043,7 +1043,7 @@ NSObject
 ### 14.2 Recovered Source Paths (Build Machine)
 
 ```
-/Users/thorfinn/Developer/learning-buddy/leanring-buddy/
+/Users/thorfinn/Developer/learning-buddy/cursor-buddy/
 ├── CompanionResponseOverlay.swift
 ├── OverlayWindow.swift
 └── PermissionGuideAssistant.swift
