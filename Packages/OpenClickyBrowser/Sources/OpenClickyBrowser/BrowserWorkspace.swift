@@ -234,10 +234,7 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private var glassBorder: Color {
-        if isBrowserDarkMode {
-            return Color.white.opacity(0.13 + glassFrosting * 0.08)
-        }
-        return DS.Colors.borderStrong.opacity(0.42 + glassFrosting * 0.18)
+        Color.white.opacity((isBrowserDarkMode ? 0.14 : 0.62) + glassFrosting * 0.08)
     }
 
     private var accentBorder: Color {
@@ -251,7 +248,11 @@ private struct OpenClickyBrowserWorkspaceView: View {
                 .regular.tint(accentColor.opacity(0.035 + glassFrosting * 0.06)),
                 in: RoundedRectangle(cornerRadius: 24, style: .continuous)
             )
-            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).stroke(glassBorder))
+            .overlay(
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
+                    .strokeBorder(glassBorder, lineWidth: 1)
+                    .shadow(color: Color.black.opacity(0.04), radius: 0, x: 0, y: 1)
+            )
             .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 

@@ -165,8 +165,8 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let maximumExpandedStatusPanelWidth: CGFloat = 182
     private static let collapsedLabelFont = NSFont.systemFont(ofSize: 13, weight: .heavy)
     private static let collapsedLabelMaxWidth: CGFloat = 132
-    // leading pad + icon (14) + stack spacing (4) + gap before trailing (4) + play/dots (14) + trailing pad
-    private static let collapsedChromeWidth: CGFloat = 7 + 14 + 4 + 4 + 14 + 12
+    // leading pad + icon (14) + stack spacing (4) + gap before trailing (8) + play/dots (14) + trailing pad
+    private static let collapsedChromeWidth: CGFloat = 10 + 14 + 4 + 8 + 14 + 16
     private static let statusLozengeHeight: CGFloat = 38
     private static let collapsedPanelHeight: CGFloat = statusLozengeHeight
     private static let expandedHandleWidth: CGFloat = 96
@@ -212,7 +212,7 @@ final class OpenClickyNotchCaptureWindowManager {
             // recover by dragging once instead of editing UserDefaults.
             guard let screen = screens.first(where: { $0.displayID == displayID }) else { continue }
             let frame = NSRect(x: x, y: y, width: w, height: h)
-            guard screen.frame.intersects(frame) else { continue }
+            guard Self.isRestorablePillFrame(frame, on: screen) else { continue }
             userPillFrames[displayID] = frame
         }
         if userPillFrames.count != raw.count {
@@ -1359,7 +1359,7 @@ final class OpenClickyNotchCaptureWindowManager {
         }
 
         // External displays expand to fit the voice content (labels + waveform).
-        return expandedStatusPanelWidth(for: screen) * 3.0
+        return expandedStatusPanelWidth(for: screen)
     }
 
     private static func hidesVoiceStatusText(on screen: NSScreen?) -> Bool {
@@ -1372,8 +1372,8 @@ final class OpenClickyNotchCaptureWindowManager {
         return trimmed.isEmpty || trimmed == "Current app"
     }
 
-    // Chrome with the name label hidden: leading pad + icon (14) + gap (4) + play/dots (14) + trailing pad
-    private static let compactCollapsedChromeWidth: CGFloat = 7 + 14 + 4 + 14 + 12
+    // Chrome with the name label hidden: leading pad + icon (14) + gap (8) + play/dots (14) + trailing pad
+    private static let compactCollapsedChromeWidth: CGFloat = 10 + 14 + 8 + 14 + 16
 
     private static func intrinsicCollapsedWidth(forAppName name: String) -> CGFloat {
         guard !isPlaceholderAppName(name) else {
@@ -1397,8 +1397,16 @@ final class OpenClickyNotchCaptureWindowManager {
             isLikelyBuiltInNotchScreen(screen) ? Self.minimumBuiltInCollapsedPanelWidth : Self.minimumExternalCollapsedPanelWidth
         )
 
-        let baseWidth = min(Self.maximumExternalCollapsedPanelWidth, max(floor, intrinsic))
-        return baseWidth * 3.0
+        return min(Self.maximumExternalCollapsedPanelWidth, max(floor, intrinsic))
+    }
+
+    private static func isRestorablePillFrame(_ frame: NSRect, on screen: NSScreen) -> Bool {
+        guard screen.frame.intersects(frame) else { return false }
+        let maximumRestorableWidth = max(Self.maximumExpandedStatusPanelWidth + 40, Self.maximumExternalCollapsedPanelWidth + 40)
+        return frame.width >= 20
+            && frame.width <= maximumRestorableWidth
+            && frame.height >= 24
+            && frame.height <= Self.textPanelHeight
     }
 
     private static func hidesCollapsedAppNameText(on screen: NSScreen?) -> Bool {
@@ -1988,16 +1996,16 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
             self.shellHeightConstraint?.constant = targetHeight
             
             if isOnNotchScreen {
-                self.collapsedStackLeadingConstraint?.constant = 16
-                self.collapsedPlayIconTrailingConstraint?.constant = -16
-                self.collapsedAgentDotsTrailingConstraint?.constant = -16
+                self.collapsedStackLeadingConstraint?.constant = 18
+                self.collapsedPlayIconTrailingConstraint?.constant = -20
+                self.collapsedAgentDotsTrailingConstraint?.constant = -20
                 
                 self.voiceNotchSpacer.isHidden = false
                 self.voiceCopyStack.setContentHuggingPriority(.defaultHigh, for: .horizontal)
             } else {
-                self.collapsedStackLeadingConstraint?.constant = 7
-                self.collapsedPlayIconTrailingConstraint?.constant = -12
-                self.collapsedAgentDotsTrailingConstraint?.constant = -12
+                self.collapsedStackLeadingConstraint?.constant = 10
+                self.collapsedPlayIconTrailingConstraint?.constant = -16
+                self.collapsedAgentDotsTrailingConstraint?.constant = -16
                 
                 self.voiceNotchSpacer.isHidden = true
                 self.voiceCopyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -2131,9 +2139,9 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         collapsedAgentDotsView.isHidden = true
         shellView.addSubview(collapsedAgentDotsView)
 
-        let playIconTrailing = collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12)
-        let agentDotsTrailing = collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12)
-        let stackLeading = collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 7)
+        let playIconTrailing = collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -16)
+        let agentDotsTrailing = collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -16)
+        let stackLeading = collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 10)
 
         collapsedPlayIconTrailingConstraint = playIconTrailing
         collapsedAgentDotsTrailingConstraint = agentDotsTrailing
@@ -2151,8 +2159,8 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
             agentDotsTrailing,
             collapsedAgentDotsView.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
             stackLeading,
-            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedPlayIconView.leadingAnchor, constant: -4),
-            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedAgentDotsView.leadingAnchor, constant: -4),
+            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedPlayIconView.leadingAnchor, constant: -8),
+            collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedAgentDotsView.leadingAnchor, constant: -8),
             collapsedStack.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
             // Keep common app names like "Google Chrome" readable while still
             // letting unusually long names tail-truncate inside the compact
@@ -3112,7 +3120,7 @@ private final class OpenClickyNotchRightEdgeGradientView: NSView {
 
 private final class OpenClickyRoundedView: NSView {
     var fillColor: NSColor = .clear { didSet { needsDisplay = true } }
-    var borderColor: NSColor = .clear { didSet { needsDisplay = true } }
+    var borderColor: NSColor = .clear { didSet { updateLayerShape(); needsDisplay = true } }
     var cornerRadius: CGFloat { didSet { updateLayerShape(); needsDisplay = true } }
     var roundsTopCorners: Bool = true { didSet { updateLayerShape(); needsDisplay = true } }
     var roundedShadowColor: NSColor? { didSet { updateLayerShape() } }
@@ -3167,6 +3175,12 @@ private final class OpenClickyRoundedView: NSView {
             layer.shadowOpacity = Float(roundedShadowColor.alphaComponent)
             layer.shadowRadius = roundedShadowBlurRadius
             layer.shadowOffset = roundedShadowOffset
+            layer.shadowPath = shadowPath(in: bounds)
+        } else if borderColor.alphaComponent > 0 {
+            layer.shadowColor = NSColor.black.cgColor
+            layer.shadowOpacity = 0.04
+            layer.shadowRadius = 0
+            layer.shadowOffset = NSSize(width: 0, height: -1)
             layer.shadowPath = shadowPath(in: bounds)
         } else {
             layer.shadowOpacity = 0
@@ -3373,9 +3387,15 @@ private final class OpenClickyClosureButton: NSButton {
             let path = NSBezierPath(roundedRect: bounds.insetBy(dx: 0.5, dy: 0.5), xRadius: cornerRadius, yRadius: cornerRadius)
             fillColor.setFill()
             path.fill()
+            let edgeShadow = NSShadow()
+            edgeShadow.shadowColor = NSColor.black.withAlphaComponent(0.04)
+            edgeShadow.shadowBlurRadius = 0
+            edgeShadow.shadowOffset = NSSize(width: 0, height: -1)
+            edgeShadow.set()
             borderColor.setStroke()
             path.lineWidth = 1
             path.stroke()
+            NSShadow().set()
         }
         super.draw(dirtyRect)
     }

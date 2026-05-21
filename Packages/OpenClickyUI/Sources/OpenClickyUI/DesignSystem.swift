@@ -72,19 +72,31 @@ public enum DS {
 
         // ── Borders ──────────────────────────────────────────────────
 
-        /// Subtle border — used for card outlines, dividers, input field borders.
+        /// Subtle edge highlight — used for card outlines, dividers, input field borders.
+        /// Prefer this as a white inset edge rather than a flat gray 1px border.
         public static var borderSubtle: Color {
-            isDarkMode ? Color(hex: "#4A504D") : Color(hex: "#CBD5E1")
+            edgeInset.opacity(isDarkMode ? 0.70 : 0.82)
         }
 
-        /// Strong border — used for focused inputs, hovered card outlines.
+        /// Strong edge highlight — used for focused inputs, hovered card outlines.
+        /// Prefer this as a white inset edge rather than a flat gray 1px border.
         public static var borderStrong: Color {
-            isDarkMode ? Color(hex: "#626A66") : Color(hex: "#94A3B8")
+            edgeInset.opacity(isDarkMode ? 0.92 : 1.0)
         }
 
         /// Faint light edge — a restrained highlight for buttons and floating panels.
         public static var edgeLight: Color {
-            isDarkMode ? Color.white.opacity(0.14) : Color.white.opacity(0.72)
+            edgeInset.opacity(isDarkMode ? 0.78 : 0.86)
+        }
+
+        /// One-pixel white inset edge used instead of gray outlines.
+        public static var edgeInset: Color {
+            Color.white.opacity(isDarkMode ? 0.20 : 0.82)
+        }
+
+        /// One-pixel black outer shadow used to sharpen dimensional edges.
+        public static var edgeOuterShadow: Color {
+            Color.black.opacity(0.04)
         }
 
         // ── Text ─────────────────────────────────────────────────────
@@ -210,7 +222,8 @@ public struct DSPrimaryButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule()
-                    .stroke(DS.Colors.edgeLight, lineWidth: 0.8)
+                    .strokeBorder(DS.Colors.edgeLight, lineWidth: 1)
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .animation(.easeOut(duration: 0.15), value: isHovered)
             .shadow(
@@ -259,7 +272,8 @@ public struct DSSecondaryButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule()
-                    .stroke(DS.Colors.edgeLight, lineWidth: 0.8)
+                    .strokeBorder(DS.Colors.edgeLight, lineWidth: 1)
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -304,7 +318,8 @@ public struct DSTertiaryButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule()
-                    .stroke(DS.Colors.edgeLight.opacity(isHovered || configuration.isPressed ? 1.0 : 0.65), lineWidth: 0.7)
+                    .strokeBorder(DS.Colors.edgeLight.opacity(isHovered || configuration.isPressed ? 1.0 : 0.65), lineWidth: 1)
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -376,10 +391,11 @@ public struct DSOutlinedButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule()
-                    .stroke(
+                    .strokeBorder(
                         borderColor(isPressed: configuration.isPressed),
                         lineWidth: 1
                     )
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -402,9 +418,9 @@ public struct DSOutlinedButtonStyle: ButtonStyle {
 
     private func borderColor(isPressed: Bool) -> Color {
         if isPressed || isHovered {
-            return DS.Colors.borderStrong
+            return DS.Colors.edgeInset.opacity(1.0)
         } else {
-            return DS.Colors.borderSubtle
+            return DS.Colors.edgeInset.opacity(0.78)
         }
     }
 }
@@ -430,10 +446,11 @@ public struct DSDestructiveButtonStyle: ButtonStyle {
             )
             .overlay(
                 Capsule()
-                    .stroke(
+                    .strokeBorder(
                         borderColor(isPressed: configuration.isPressed),
                         lineWidth: 1
                     )
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -491,7 +508,8 @@ public struct DSIconButtonStyle: ButtonStyle {
             )
             .overlay(
                 Circle()
-                    .stroke(circleBorderColor(isPressed: configuration.isPressed), lineWidth: 1)
+                    .strokeBorder(circleBorderColor(isPressed: configuration.isPressed), lineWidth: 1)
+                    .shadow(color: DS.Colors.edgeOuterShadow, radius: 0, x: 0, y: 1)
             )
             .scaleEffect(configuration.isPressed ? 0.93 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
@@ -596,9 +614,9 @@ public struct DSIconButtonStyle: ButtonStyle {
             return DS.Colors.destructive.opacity(0.30)
         }
         if isPressed || isHovered {
-            return DS.Colors.borderStrong
+            return DS.Colors.edgeInset.opacity(1.0)
         } else {
-            return DS.Colors.borderSubtle.opacity(0.5)
+            return DS.Colors.edgeInset.opacity(0.58)
         }
     }
 }
