@@ -580,6 +580,16 @@ final class OpenClickyNotchCaptureWindowManager {
             let screenWidth = widthForScreen?(screen) ?? width
             let statusPanel = mirroredStatusPanel(for: screen, width: screenWidth, height: height)
             guard let statusView = mirroredStatusContentViews[screen.displayID] else { continue }
+            
+            if Self.hasPhysicalNotch(on: screen) {
+                let staticFrame = Self.physicalNotchWindowFrame(on: screen)
+                statusPanel.setFrame(staticFrame, display: true, animate: false)
+                statusView.setCanvas(size: staticFrame.size)
+                configure(statusView, screen)
+                statusPanel.orderFrontRegardless()
+                continue
+            }
+            
             // Respect the per-screen user lock so dragging the mirrored pill
             // and then switching apps doesn't snap it back to centered/auto.
             let userFrame = userPillFrames[screen.displayID]
@@ -727,7 +737,27 @@ final class OpenClickyNotchCaptureWindowManager {
             return
         }
         if let panel, panel.isVisible, panel.frame.contains(clickLocation) {
-            return
+            if let screen = panel.screen, Self.hasPhysicalNotch(on: screen), let root = contentView {
+                let windowPoint = panel.convertPoint(fromScreen: clickLocation)
+                let localPoint = root.convert(windowPoint, from: nil)
+                if root.shellView.frame.contains(localPoint) {
+                    return
+                }
+            } else {
+                return
+            }
+        }
+        for (displayID, mirroredPanel) in mirroredStatusPanels where mirroredPanel.isVisible {
+            if mirroredPanel.frame.contains(clickLocation) {
+                if let screen = mirroredPanel.screen, Self.hasPhysicalNotch(on: screen) {
+                    let localPoint = mirroredPanel.convertPoint(fromScreen: clickLocation)
+                    if let root = mirroredStatusContentViews[displayID], root.shellView.frame.contains(localPoint) {
+                        return
+                    }
+                } else {
+                    return
+                }
+            }
         }
         hideMainPanel()
     }
@@ -926,6 +956,15 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func resizeAndReposition(width: CGFloat, height: CGFloat) {
         guard let panel else { return }
+        let screen = preferredAnchorScreen() ?? panel.screen ?? NSScreen.main ?? NSScreen.screens.first
+        if let screen, Self.hasPhysicalNotch(on: screen) {
+            let staticFrame = Self.physicalNotchWindowFrame(on: screen)
+            panel.setFrame(staticFrame, display: true, animate: false)
+            contentView?.setCanvas(size: staticFrame.size)
+            repositionMainPanelIfVisible()
+            refreshStatsHUD()
+            return
+        }
         let displayID = panel.screen?.displayID ?? preferredAnchorScreen()?.displayID
         let userFrame = displayID.flatMap { userPillFrames[$0] }
         let size: NSSize
@@ -1197,7 +1236,13 @@ final class OpenClickyNotchCaptureWindowManager {
         // safe area on built-in displays, overlapping the menu bar on
         // externals), so its placement already accounts for any overhang.
         let pillBottomY: CGFloat
-        if let panel, panel.isVisible {
+        if Self.hasPhysicalNotch(on: screen) {
+            var safeTop: CGFloat = 0
+            if #available(macOS 12.0, *) {
+                safeTop = screen.safeAreaInsets.top
+            }
+            pillBottomY = screen.frame.maxY - max(38, safeTop + 6)
+        } else if let panel, panel.isVisible {
             pillBottomY = panel.frame.minY
         } else {
             let captureSize = NSSize(
@@ -1276,14 +1321,13 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private static func statusLozengeY(for size: NSSize, on screen: NSScreen) -> CGFloat {
         if notchReservedTopInset(on: screen) != nil {
-            // On a MacBook notch screen the status bar should hug the physical
-            // notch at the top edge. Clipping a couple of points at the top
-            // hides the seam between the pill and the notch cutout.
+            // On notch MBP: position the pill so its top edge tucks slightly
+            // into the notch safe area (under the physical cutout). Small
+            // positive overlap hides the seam and keeps it visually "in the notch".
             return screen.frame.maxY - size.height + Self.noNotchScreenTopOverlap
         }
         // External / no-notch screens: sit the pill TOP exactly at the screen
-        // top so the rounded top corners are visible. The previous +overlap
-        // pushed the top edge 2pt off-screen and clipped it flat.
+        // top so the rounded top corners are visible.
         return screen.frame.maxY - size.height - Self.topGap
     }
 
@@ -1315,7 +1359,7 @@ final class OpenClickyNotchCaptureWindowManager {
         }
 
         // External displays expand to fit the voice content (labels + waveform).
-        return expandedStatusPanelWidth(for: screen)
+        return expandedStatusPanelWidth(for: screen) * 3.0
     }
 
     private static func hidesVoiceStatusText(on screen: NSScreen?) -> Bool {
@@ -1353,7 +1397,8 @@ final class OpenClickyNotchCaptureWindowManager {
             isLikelyBuiltInNotchScreen(screen) ? Self.minimumBuiltInCollapsedPanelWidth : Self.minimumExternalCollapsedPanelWidth
         )
 
-        return min(Self.maximumExternalCollapsedPanelWidth, max(floor, intrinsic))
+        let baseWidth = min(Self.maximumExternalCollapsedPanelWidth, max(floor, intrinsic))
+        return baseWidth * 3.0
     }
 
     private static func hidesCollapsedAppNameText(on screen: NSScreen?) -> Bool {
@@ -1446,7 +1491,7 @@ final class OpenClickyNotchCaptureWindowManager {
         return nil
     }
 
-    private static func physicalNotchWidth(on screen: NSScreen) -> CGFloat? {
+    fileprivate static func physicalNotchWidth(on screen: NSScreen) -> CGFloat? {
         guard #available(macOS 12.0, *),
               let leftArea = screen.auxiliaryTopLeftArea,
               let rightArea = screen.auxiliaryTopRightArea,
@@ -1457,6 +1502,28 @@ final class OpenClickyNotchCaptureWindowManager {
 
         let gap = rightArea.minX - leftArea.maxX
         return gap > 0 ? gap : nil
+    }
+
+    fileprivate static func hasPhysicalNotch(on screen: NSScreen) -> Bool {
+        guard #available(macOS 12.0, *),
+              screen.safeAreaInsets.top > 0,
+              let notchWidth = physicalNotchWidth(on: screen),
+              notchWidth > 0 else {
+            return false
+        }
+        return true
+    }
+
+    private static func physicalNotchWindowFrame(on screen: NSScreen) -> NSRect {
+        var safeTop: CGFloat = 0
+        if #available(macOS 12.0, *) {
+            safeTop = screen.safeAreaInsets.top
+        }
+        let width: CGFloat = 520
+        let height: CGFloat = 226 + safeTop
+        let x = screen.frame.midX - width / 2
+        let y = screen.frame.maxY - height
+        return NSRect(x: x, y: y, width: width, height: height)
     }
 
     private func updateForegroundAppIcon(bundleIdentifier: String?, bundlePath: String?, name: String) {
@@ -1596,8 +1663,13 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 
     private let notchHandle = OpenClickyRoundedView(cornerRadius: 5)
-    private let shellGlassView = OpenClickyLiquidGlassBackdropView(cornerRadius: 24)
-    private let shellView = OpenClickyRoundedView(cornerRadius: 24)
+    fileprivate let shellGlassView = OpenClickyLiquidGlassBackdropView(cornerRadius: 24)
+    fileprivate let shellView = OpenClickyRoundedView(cornerRadius: 24)
+    
+    fileprivate var shellWidthConstraint: NSLayoutConstraint?
+    fileprivate var shellHeightConstraint: NSLayoutConstraint?
+    fileprivate var shellCenterXConstraint: NSLayoutConstraint?
+    fileprivate var shellTopConstraint: NSLayoutConstraint?
     private let rightEdgeGradientView = OpenClickyNotchRightEdgeGradientView()
     private let textStack = NSStackView()
     private let voiceStack = NSStackView()
@@ -1612,6 +1684,9 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     private let voiceCopyStack = NSStackView()
     private let voicePhaseIconView = NSImageView()
     private var voiceCopyMinimumWidthConstraint: NSLayoutConstraint?
+    private var collapsedStackLeadingConstraint: NSLayoutConstraint?
+    private var collapsedPlayIconTrailingConstraint: NSLayoutConstraint?
+    private var collapsedAgentDotsTrailingConstraint: NSLayoutConstraint?
     private let voiceNotchSpacer = NSView()
     private let waveformView = OpenClickyNotchWaveformNSView()
     private let collapsedAppIconView = NSImageView()
@@ -1698,12 +1773,13 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         shellView.roundsTopCorners = false
         shellView.cornerRadius = 17
         updateShellViewFillColor()
-        shellView.borderColor = .clear
+        shellView.borderColor = NSColor.white.withAlphaComponent(0.07)
         shellView.roundedShadowColor = nil
         shellView.roundedShadowBlurRadius = 0
         shellView.roundedShadowOffset = .zero
         configureRightEdgeGradient(isVisible: true, intensity: hasRunningAgentWork ? 0.42 : 0.34)
         updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
+        updateShellConstraints(animated: true)
         needsDisplay = true
     }
 
@@ -1734,6 +1810,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         updateAccentColors()
         updateSuggestions()
         textField.stringValue = ""
+        updateShellConstraints(animated: true)
         window?.makeFirstResponder(textField)
     }
 
@@ -1765,7 +1842,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         collapsedAgentDotsView.isHidden = true
         shellView.cornerRadius = 17
         updateShellViewFillColor()
-        shellView.borderColor = .clear
+        shellView.borderColor = NSColor.white.withAlphaComponent(0.07)
         shellView.roundedShadowColor = nil
         shellView.roundedShadowBlurRadius = 0
         shellView.roundedShadowOffset = .zero
@@ -1775,6 +1852,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         updateVoiceLabels(for: phase, foregroundAppName: foregroundAppName, hidesStatusText: hidesStatusText)
         waveformView.audioPowerLevel = audioPowerLevel
         waveformView.accentColor = accentColor
+        updateShellConstraints(animated: true)
     }
 
     func updateForegroundApp(icon: NSImage?, name: String) {
@@ -1824,7 +1902,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         bounds = NSRect(origin: .zero, size: size)
         needsLayout = true
         needsDisplay = true
-        updateTrackingAreas()
+        updateShellConstraints(animated: false)
         // Force the resize-edge cursor rects to recompute against the new
         // width so the hit zones track the pill as it grows/shrinks.
         window?.invalidateCursorRects(for: self)
@@ -1833,8 +1911,16 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         trackingAreas.forEach { removeTrackingArea($0) }
+        
+        let trackingRect: NSRect
+        if let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            trackingRect = shellView.frame
+        } else {
+            trackingRect = bounds
+        }
+        
         addTrackingArea(NSTrackingArea(
-            rect: bounds,
+            rect: trackingRect,
             options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect],
             owner: self,
             userInfo: nil
@@ -1843,7 +1929,96 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
 
     override func mouseEntered(with event: NSEvent) {
         guard mode == .collapsed || mode == .voice else { return }
+        if let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            let localPoint = convert(event.locationInWindow, from: nil)
+            guard shellView.frame.contains(localPoint) else { return }
+        }
         expand?()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window != nil {
+            updateShellConstraints(animated: false)
+        }
+    }
+
+    private func updateShellConstraints(animated: Bool) {
+        guard let window = window else { return }
+        let isOnNotchScreen: Bool
+        let notchWidth: CGFloat
+        let safeAreaTop: CGFloat
+        if let screen = window.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            isOnNotchScreen = true
+            notchWidth = OpenClickyNotchCaptureWindowManager.physicalNotchWidth(on: screen) ?? 172
+            var topInset: CGFloat = 0
+            if #available(macOS 12.0, *) {
+                topInset = screen.safeAreaInsets.top
+            }
+            safeAreaTop = topInset
+        } else {
+            isOnNotchScreen = false
+            notchWidth = 0
+            safeAreaTop = 0
+        }
+
+        let targetWidth: CGFloat
+        let targetHeight: CGFloat
+
+        if isOnNotchScreen {
+            switch mode {
+            case .collapsed:
+                targetWidth = notchWidth * 2.0
+                targetHeight = max(38, safeAreaTop + 6)
+            case .voice:
+                targetWidth = notchWidth * 2.0
+                targetHeight = max(38, safeAreaTop + 6)
+            case .text:
+                targetWidth = 520
+                targetHeight = 226
+            }
+        } else {
+            targetWidth = bounds.width
+            targetHeight = bounds.height
+        }
+
+        let changes = { [weak self] in
+            guard let self else { return }
+            self.shellWidthConstraint?.constant = targetWidth
+            self.shellHeightConstraint?.constant = targetHeight
+            
+            if isOnNotchScreen {
+                self.collapsedStackLeadingConstraint?.constant = 16
+                self.collapsedPlayIconTrailingConstraint?.constant = -16
+                self.collapsedAgentDotsTrailingConstraint?.constant = -16
+                
+                self.voiceNotchSpacer.isHidden = false
+                self.voiceCopyStack.setContentHuggingPriority(.defaultHigh, for: .horizontal)
+            } else {
+                self.collapsedStackLeadingConstraint?.constant = 7
+                self.collapsedPlayIconTrailingConstraint?.constant = -12
+                self.collapsedAgentDotsTrailingConstraint?.constant = -12
+                
+                self.voiceNotchSpacer.isHidden = true
+                self.voiceCopyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+            }
+            
+            self.layoutSubtreeIfNeeded()
+        }
+
+        if animated && window.isVisible {
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.22
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                context.allowsImplicitAnimation = true
+                changes()
+            }
+        } else {
+            changes()
+        }
+        
+        updateTrackingAreas()
+        window.invalidateCursorRects(for: self)
     }
 
     private func buildViewHierarchy() {
@@ -1889,21 +2064,31 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         configureTextStack()
         configureVoiceStack()
 
+        let widthConstraint = shellView.widthAnchor.constraint(equalToConstant: bounds.width)
+        let heightConstraint = shellView.heightAnchor.constraint(equalToConstant: bounds.height)
+        let centerXConstraint = shellView.centerXAnchor.constraint(equalTo: centerXAnchor)
+        let topConstraint = shellView.topAnchor.constraint(equalTo: topAnchor)
+        
+        shellWidthConstraint = widthConstraint
+        shellHeightConstraint = heightConstraint
+        shellCenterXConstraint = centerXConstraint
+        shellTopConstraint = topConstraint
+
         NSLayoutConstraint.activate([
             notchHandle.topAnchor.constraint(equalTo: topAnchor),
             notchHandle.centerXAnchor.constraint(equalTo: centerXAnchor),
             notchHandle.widthAnchor.constraint(equalToConstant: 52),
             notchHandle.heightAnchor.constraint(equalToConstant: 10),
 
-            shellGlassView.topAnchor.constraint(equalTo: topAnchor),
-            shellGlassView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            shellGlassView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            shellGlassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            shellGlassView.topAnchor.constraint(equalTo: shellView.topAnchor),
+            shellGlassView.leadingAnchor.constraint(equalTo: shellView.leadingAnchor),
+            shellGlassView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor),
+            shellGlassView.bottomAnchor.constraint(equalTo: shellView.bottomAnchor),
 
-            shellView.topAnchor.constraint(equalTo: topAnchor),
-            shellView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            shellView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            shellView.bottomAnchor.constraint(equalTo: bottomAnchor),
+            widthConstraint,
+            heightConstraint,
+            centerXConstraint,
+            topConstraint,
 
             rightEdgeGradientView.topAnchor.constraint(equalTo: shellView.topAnchor),
             rightEdgeGradientView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor),
@@ -1917,7 +2102,7 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
             imageView.translatesAutoresizingMaskIntoConstraints = false
             imageView.imageScaling = .scaleProportionallyUpOrDown
             imageView.wantsLayer = true
-            imageView.layer?.cornerRadius = 4
+            imageView.layer?.cornerRadius = (imageView == collapsedAppIconView || imageView == voiceAppIconView) ? 6 : 4
             imageView.layer?.masksToBounds = true
             imageView.isHidden = true
         }
@@ -1946,18 +2131,26 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         collapsedAgentDotsView.isHidden = true
         shellView.addSubview(collapsedAgentDotsView)
 
+        let playIconTrailing = collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12)
+        let agentDotsTrailing = collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12)
+        let stackLeading = collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 7)
+
+        collapsedPlayIconTrailingConstraint = playIconTrailing
+        collapsedAgentDotsTrailingConstraint = agentDotsTrailing
+        collapsedStackLeadingConstraint = stackLeading
+
         NSLayoutConstraint.activate([
-            collapsedAppIconView.widthAnchor.constraint(equalToConstant: 14),
-            collapsedAppIconView.heightAnchor.constraint(equalToConstant: 14),
+            collapsedAppIconView.widthAnchor.constraint(equalToConstant: 28),
+            collapsedAppIconView.heightAnchor.constraint(equalToConstant: 28),
             collapsedPlayIconView.widthAnchor.constraint(equalToConstant: 14),
             collapsedPlayIconView.heightAnchor.constraint(equalToConstant: 14),
-            collapsedPlayIconView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12),
+            playIconTrailing,
             collapsedPlayIconView.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
             collapsedAgentDotsView.widthAnchor.constraint(equalToConstant: 20),
             collapsedAgentDotsView.heightAnchor.constraint(equalToConstant: 8),
-            collapsedAgentDotsView.trailingAnchor.constraint(equalTo: shellView.trailingAnchor, constant: -12),
+            agentDotsTrailing,
             collapsedAgentDotsView.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
-            collapsedStack.leadingAnchor.constraint(equalTo: shellView.leadingAnchor, constant: 7),
+            stackLeading,
             collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedPlayIconView.leadingAnchor, constant: -4),
             collapsedStack.trailingAnchor.constraint(lessThanOrEqualTo: collapsedAgentDotsView.leadingAnchor, constant: -4),
             collapsedStack.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
@@ -2104,8 +2297,8 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         voiceStack.addArrangedSubview(voiceCopyStack)
         voiceStack.addArrangedSubview(voiceNotchSpacer)
         voiceStack.addArrangedSubview(waveformView)
-        voiceAppIconView.widthAnchor.constraint(equalToConstant: 22).isActive = true
-        voiceAppIconView.heightAnchor.constraint(equalToConstant: 22).isActive = true
+        voiceAppIconView.widthAnchor.constraint(equalToConstant: 28).isActive = true
+        voiceAppIconView.heightAnchor.constraint(equalToConstant: 28).isActive = true
         voicePhaseIconView.widthAnchor.constraint(equalToConstant: 14).isActive = true
         voicePhaseIconView.heightAnchor.constraint(equalToConstant: 14).isActive = true
         let copyMinimumWidthConstraint = voiceCopyStack.widthAnchor.constraint(greaterThanOrEqualToConstant: 72)
@@ -2347,8 +2540,19 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     // on the right resize zone. Claim edge clicks for the root view so
     // mouseDown reliably fires our drag-detection path.
     override func hitTest(_ point: NSPoint) -> NSView? {
+        let localPoint = convert(point, from: superview)
+        
+        if let window = window, let screen = window.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            guard shellView.frame.contains(localPoint) else {
+                return nil
+            }
+            if mode == .collapsed {
+                return self
+            }
+            return super.hitTest(point)
+        }
+        
         if mode == .collapsed {
-            let localPoint = convert(point, from: superview)
             if localPoint.x >= 0, localPoint.x <= bounds.width,
                localPoint.y >= 0, localPoint.y <= bounds.height,
                localPoint.x < pillEdgeHitWidth || localPoint.x > bounds.width - pillEdgeHitWidth {
@@ -2359,6 +2563,10 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     }
 
     override func mouseDown(with event: NSEvent) {
+        if let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            super.mouseDown(with: event)
+            return
+        }
         if mode == .collapsed, let window {
             let localPoint = convert(event.locationInWindow, from: nil)
             let zoneMode: PillDragState.Mode
@@ -2445,6 +2653,9 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
     override func resetCursorRects() {
         super.resetCursorRects()
         guard mode == .collapsed else { return }
+        if let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) {
+            return
+        }
         addCursorRect(NSRect(x: 0, y: 0, width: pillEdgeHitWidth, height: bounds.height), cursor: .resizeLeftRight)
         addCursorRect(NSRect(x: bounds.maxX - pillEdgeHitWidth, y: 0, width: pillEdgeHitWidth, height: bounds.height), cursor: .resizeLeftRight)
     }
@@ -2629,14 +2840,39 @@ final class OpenClickyLiquidGlassBackdropView: NSView {
         }
 
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let filletRadius: CGFloat = 8
         let path = CGMutablePath()
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + radius))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.minY), control: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + radius), control: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        
+        path.addCurve(
+            to: CGPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius),
+            control1: CGPoint(x: rect.maxX - filletRadius * 0.5, y: rect.maxY),
+            control2: CGPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius * 0.5)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.maxX - filletRadius, y: rect.minY + radius))
+        
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - filletRadius - radius, y: rect.minY),
+            control: CGPoint(x: rect.maxX - filletRadius, y: rect.minY)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.minX + filletRadius + radius, y: rect.minY))
+        
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + filletRadius, y: rect.minY + radius),
+            control: CGPoint(x: rect.minX + filletRadius, y: rect.minY)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius))
+        
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY),
+            control1: CGPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius * 0.5),
+            control2: CGPoint(x: rect.minX + filletRadius * 0.5, y: rect.maxY)
+        )
+        
         path.closeSubpath()
         return path
     }
@@ -2702,22 +2938,41 @@ private final class OpenClickyLiquidGlassAccentWashView: NSView {
         }
 
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let filletRadius: CGFloat = 8
         let path = NSBezierPath()
-        path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + radius))
+        path.move(to: NSPoint(x: rect.minX, y: rect.minY))
+        path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
+        
         path.curve(
-            to: NSPoint(x: rect.maxX - radius, y: rect.minY),
-            controlPoint1: NSPoint(x: rect.maxX, y: rect.minY + radius * 0.45),
-            controlPoint2: NSPoint(x: rect.maxX - radius * 0.45, y: rect.minY)
+            to: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + filletRadius),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius * 0.5, y: rect.minY),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + filletRadius * 0.5)
         )
-        path.line(to: NSPoint(x: rect.minX + radius, y: rect.minY))
+        
+        path.line(to: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - radius))
+        
         path.curve(
-            to: NSPoint(x: rect.minX, y: rect.minY + radius),
-            controlPoint1: NSPoint(x: rect.minX + radius * 0.45, y: rect.minY),
-            controlPoint2: NSPoint(x: rect.minX, y: rect.minY + radius * 0.45)
+            to: NSPoint(x: rect.maxX - filletRadius - radius, y: rect.maxY),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - radius * 0.45),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius - radius * 0.45, y: rect.maxY)
         )
-        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        
+        path.line(to: NSPoint(x: rect.minX + filletRadius + radius, y: rect.maxY))
+        
+        path.curve(
+            to: NSPoint(x: rect.minX + filletRadius, y: rect.maxY - radius),
+            controlPoint1: NSPoint(x: rect.minX + filletRadius + radius * 0.45, y: rect.maxY),
+            controlPoint2: NSPoint(x: rect.minX + filletRadius, y: rect.maxY - radius * 0.45)
+        )
+        
+        path.line(to: NSPoint(x: rect.minX + filletRadius, y: rect.minY + filletRadius))
+        
+        path.curve(
+            to: NSPoint(x: rect.minX, y: rect.minY),
+            controlPoint1: NSPoint(x: rect.minX + filletRadius, y: rect.minY + filletRadius * 0.5),
+            controlPoint2: NSPoint(x: rect.minX + filletRadius * 0.5, y: rect.minY)
+        )
+        
         path.close()
         return path
     }
@@ -2825,6 +3080,7 @@ private final class OpenClickyNotchRightEdgeGradientView: NSView {
     private func clippedPath() -> NSBezierPath {
         let rect = bounds
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let filletRadius: CGFloat = 8
         let path = NSBezierPath()
 
         if roundsTopCorners {
@@ -2833,12 +3089,21 @@ private final class OpenClickyNotchRightEdgeGradientView: NSView {
 
         path.move(to: NSPoint(x: rect.minX, y: rect.minY))
         path.line(to: NSPoint(x: rect.maxX, y: rect.minY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.maxY - radius))
+        
         path.curve(
-            to: NSPoint(x: rect.maxX - radius, y: rect.maxY),
-            controlPoint1: NSPoint(x: rect.maxX, y: rect.maxY - radius * 0.45),
-            controlPoint2: NSPoint(x: rect.maxX - radius * 0.45, y: rect.maxY)
+            to: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + filletRadius),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius * 0.5, y: rect.minY),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + filletRadius * 0.5)
         )
+        
+        path.line(to: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - radius))
+        
+        path.curve(
+            to: NSPoint(x: rect.maxX - filletRadius - radius, y: rect.maxY),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - radius * 0.45),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius - radius * 0.45, y: rect.maxY)
+        )
+        
         path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
         path.close()
         return path
@@ -2915,22 +3180,41 @@ private final class OpenClickyRoundedView: NSView {
         }
 
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let filletRadius: CGFloat = 8
         let path = NSBezierPath()
         path.move(to: NSPoint(x: rect.minX, y: rect.maxY))
         path.line(to: NSPoint(x: rect.maxX, y: rect.maxY))
-        path.line(to: NSPoint(x: rect.maxX, y: rect.minY + radius))
+        
         path.curve(
-            to: NSPoint(x: rect.maxX - radius, y: rect.minY),
-            controlPoint1: NSPoint(x: rect.maxX, y: rect.minY + radius * 0.45),
-            controlPoint2: NSPoint(x: rect.maxX - radius * 0.45, y: rect.minY)
+            to: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius * 0.5, y: rect.maxY),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius * 0.5)
         )
-        path.line(to: NSPoint(x: rect.minX + radius, y: rect.minY))
+        
+        path.line(to: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + radius))
+        
         path.curve(
-            to: NSPoint(x: rect.minX, y: rect.minY + radius),
-            controlPoint1: NSPoint(x: rect.minX + radius * 0.45, y: rect.minY),
-            controlPoint2: NSPoint(x: rect.minX, y: rect.minY + radius * 0.45)
+            to: NSPoint(x: rect.maxX - filletRadius - radius, y: rect.minY),
+            controlPoint1: NSPoint(x: rect.maxX - filletRadius, y: rect.minY + radius * 0.45),
+            controlPoint2: NSPoint(x: rect.maxX - filletRadius - radius * 0.45, y: rect.minY)
         )
-        path.line(to: NSPoint(x: rect.minX, y: rect.maxY))
+        
+        path.line(to: NSPoint(x: rect.minX + filletRadius + radius, y: rect.minY))
+        
+        path.curve(
+            to: NSPoint(x: rect.minX + filletRadius, y: rect.minY + radius),
+            controlPoint1: NSPoint(x: rect.minX + filletRadius + radius * 0.45, y: rect.minY),
+            controlPoint2: NSPoint(x: rect.minX + filletRadius, y: rect.minY + radius * 0.45)
+        )
+        
+        path.line(to: NSPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius))
+        
+        path.curve(
+            to: NSPoint(x: rect.minX, y: rect.maxY),
+            controlPoint1: NSPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius * 0.5),
+            controlPoint2: NSPoint(x: rect.minX + filletRadius * 0.5, y: rect.maxY)
+        )
+        
         path.close()
         return path
     }
@@ -2946,14 +3230,39 @@ private final class OpenClickyRoundedView: NSView {
         }
 
         let radius = min(cornerRadius, rect.width / 2, rect.height / 2)
+        let filletRadius: CGFloat = 8
         let path = CGMutablePath()
         path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
         path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.minY + radius))
-        path.addQuadCurve(to: CGPoint(x: rect.maxX - radius, y: rect.minY), control: CGPoint(x: rect.maxX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX + radius, y: rect.minY))
-        path.addQuadCurve(to: CGPoint(x: rect.minX, y: rect.minY + radius), control: CGPoint(x: rect.minX, y: rect.minY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.maxY))
+        
+        path.addCurve(
+            to: CGPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius),
+            control1: CGPoint(x: rect.maxX - filletRadius * 0.5, y: rect.maxY),
+            control2: CGPoint(x: rect.maxX - filletRadius, y: rect.maxY - filletRadius * 0.5)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.maxX - filletRadius, y: rect.minY + radius))
+        
+        path.addQuadCurve(
+            to: CGPoint(x: rect.maxX - filletRadius - radius, y: rect.minY),
+            control: CGPoint(x: rect.maxX - filletRadius, y: rect.minY)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.minX + filletRadius + radius, y: rect.minY))
+        
+        path.addQuadCurve(
+            to: CGPoint(x: rect.minX + filletRadius, y: rect.minY + radius),
+            control: CGPoint(x: rect.minX + filletRadius, y: rect.minY)
+        )
+        
+        path.addLine(to: CGPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius))
+        
+        path.addCurve(
+            to: CGPoint(x: rect.minX, y: rect.maxY),
+            control1: CGPoint(x: rect.minX + filletRadius, y: rect.maxY - filletRadius * 0.5),
+            control2: CGPoint(x: rect.minX + filletRadius * 0.5, y: rect.maxY)
+        )
+        
         path.closeSubpath()
         return path
     }

@@ -74,12 +74,17 @@ public enum DS {
 
         /// Subtle border — used for card outlines, dividers, input field borders.
         public static var borderSubtle: Color {
-            isDarkMode ? Color(hex: "#373B39") : Color(hex: "#E2E8F0")
+            isDarkMode ? Color(hex: "#4A504D") : Color(hex: "#CBD5E1")
         }
 
         /// Strong border — used for focused inputs, hovered card outlines.
         public static var borderStrong: Color {
-            isDarkMode ? Color(hex: "#444947") : Color(hex: "#CBD5E1")
+            isDarkMode ? Color(hex: "#626A66") : Color(hex: "#94A3B8")
+        }
+
+        /// Faint light edge — a restrained highlight for buttons and floating panels.
+        public static var edgeLight: Color {
+            isDarkMode ? Color.white.opacity(0.14) : Color.white.opacity(0.72)
         }
 
         // ── Text ─────────────────────────────────────────────────────
@@ -203,6 +208,10 @@ public struct DSPrimaryButtonStyle: ButtonStyle {
                 Capsule()
                     .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
             )
+            .overlay(
+                Capsule()
+                    .stroke(DS.Colors.edgeLight, lineWidth: 0.8)
+            )
             .animation(.easeOut(duration: 0.15), value: isHovered)
             .shadow(
                 color: DS.Colors.accent.opacity(isHovered ? 0.24 : 0),
@@ -248,6 +257,10 @@ public struct DSSecondaryButtonStyle: ButtonStyle {
                 Capsule()
                     .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
             )
+            .overlay(
+                Capsule()
+                    .stroke(DS.Colors.edgeLight, lineWidth: 0.8)
+            )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)
             .animation(.easeOut(duration: DS.Animation.fast), value: isHovered)
@@ -288,6 +301,10 @@ public struct DSTertiaryButtonStyle: ButtonStyle {
             .background(
                 Capsule()
                     .fill(buttonBackgroundColor(isPressed: configuration.isPressed))
+            )
+            .overlay(
+                Capsule()
+                    .stroke(DS.Colors.edgeLight.opacity(isHovered || configuration.isPressed ? 1.0 : 0.65), lineWidth: 0.7)
             )
             .scaleEffect(configuration.isPressed ? 0.97 : 1.0)
             .animation(.easeOut(duration: DS.Animation.fast), value: configuration.isPressed)

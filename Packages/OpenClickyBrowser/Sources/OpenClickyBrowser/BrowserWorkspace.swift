@@ -234,7 +234,10 @@ private struct OpenClickyBrowserWorkspaceView: View {
     }
 
     private var glassBorder: Color {
-        DS.Colors.borderSubtle.opacity(0.36 + glassFrosting * 0.24)
+        if isBrowserDarkMode {
+            return Color.white.opacity(0.13 + glassFrosting * 0.08)
+        }
+        return DS.Colors.borderStrong.opacity(0.42 + glassFrosting * 0.18)
     }
 
     private var accentBorder: Color {
@@ -1851,6 +1854,10 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
             "agent mode",
             "start a task",
             "make a task",
+            "subagent",
+            "sub-agent",
+            "sub task",
+            "subtask",
             "long running",
             "run in the background",
             "write files",
@@ -1894,14 +1901,10 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
                     }
                 }
             } else {
-                if !modelID.isEmpty && !usesAnthropicBrowserModel {
-                    startLinkedAgentTask(for: prompt, specialist: specialist)
-                    return
-                }
                 messages.append(
                     OpenClickyBrowserChatMessage(
                         role: "OpenClicky",
-                        text: inlineBrowserReply(for: prompt) + "\n\n(Tip: choose a GPT/Codex computer-use model to route through Agent Mode, or configure the selected provider for the inline browser agent.)",
+                        text: inlineBrowserReply(for: prompt),
                         isUser: false
                     )
                 )
@@ -2078,7 +2081,7 @@ private final class OpenClickyBrowserWorkspaceModel: ObservableObject, OpenClick
         - Inspector selections: \(selectionContext)
         - Attachments: \(attachmentContext)
 
-        Answer as OpenClicky and stay scoped to this browser workspace/page unless the user asks for broader work.
+        Answer as OpenClicky. This is the bigger/background lane; use child workers only for bounded subtasks that materially help, and stay scoped to this browser workspace/page unless the user asks for broader work.
         """.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 

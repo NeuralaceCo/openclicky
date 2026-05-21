@@ -127,8 +127,8 @@ The side chat is the first-class browser agent for this workspace. It should wor
 
 - Simple page questions, summaries, key points, navigation, search, click, type, and fill actions happen inline in the side chat.
 - The chat starts blank and can be cleared without resetting the browser tab.
-- Do not start a background Agent Mode task for ordinary page chat.
-- Create an Agent Mode task only when the user explicitly asks for background work or the request clearly needs longer-running coding, file, or deep research work.
+- Do not start a background Agent Mode task for ordinary page chat, even when the selected computer-use model is a GPT/Codex model.
+- Create an Agent Mode task only when the user explicitly asks for background work, asks for subagents/subtasks, or the request clearly needs longer-running coding, file, or deep research work.
 
 ### Local page support
 
@@ -300,7 +300,7 @@ Next implementation slice:
 - Browser Workspace chat starts blank, can be cleared, and keeps only basic suggestion chips.
 - Browser Workspace chat now handles straightforward page-control requests directly in the active WebKit tab and answers ordinary page prompts inline instead of creating background tasks.
 - Browser Workspace chat now has a first inline planning executor for multi-step search-result workflows, keeping “search/open first N/summarize here” inside the browser instance.
-- Agent Mode is reserved for prompts that explicitly request background work or clearly require longer-running coding, file, or deep research work.
+- Agent Mode is reserved for prompts that explicitly request background work, ask for subagents/subtasks, or clearly require longer-running coding, file, or deep research work.
 - When Agent Mode is needed, the prompt includes title, URL/local route, context status, readable text, selected text, and split-view state.
 - Agent history after app restart now persists all visible unarchived sessions, not only interrupted/resumeable ones. Completed sessions should return in the active history after relaunch; archived sessions still remain under Archived.
 - Restored sessions are sorted by latest activity so the most recent work appears first, and completed restored sessions do not misleadingly show the resume-after-relaunch action.
