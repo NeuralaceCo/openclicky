@@ -117,8 +117,8 @@ final class OpenClickyNotchCaptureWindowManager {
     private var mainPanel: OpenClickyNotchCapturePanel?
     private let dynamicNotchKitBridge = OpenClickyDynamicNotchKitBridge()
     private var contentView: OpenClickyNotchCaptureRootView?
-    private var mirroredStatusPanels: [CGDirectDisplayID: OpenClickyNotchCapturePanel] = [:]
-    private var mirroredStatusContentViews: [CGDirectDisplayID: OpenClickyNotchCaptureRootView] = [:]
+    private var externalHoverStatusPanel: OpenClickyNotchCapturePanel?
+    private var externalHoverStatusContentView: OpenClickyNotchCaptureRootView?
     private var mainHostingView: NSHostingView<OpenClickyNotchPanelView>?
     private var mainPanelGlassBackdrop: OpenClickyLiquidGlassBackdropView?
     private var mainPanelGlobalClickMonitor: Any?
@@ -137,6 +137,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private var persistentSubmitText: ((String) -> Void)?
     private var persistentShowMainPanel: (() -> Void)?
     private var persistentHasRunningAgentWork = false
+    private var persistentAgentLiveActivity = OpenClickyAgentLiveActivity()
     private var currentVoicePhase: OpenClickyNotchVoicePhase = .idle
     private var currentAudioPowerLevel: CGFloat = 0
     private var isUsingDynamicNotchKitStatusSurface = false
@@ -191,6 +192,7 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let noNotchScreenTopOverlap: CGFloat = 2
     private static let notchClearanceGap: CGFloat = 4
     private static let mainPanelGapBelowCapture: CGFloat = 8
+    private static let mainPanelPhysicalNotchDownOffset: CGFloat = 56
     private static let screenEdgePadding: CGFloat = 12
     private static let escapeKeyCode: UInt16 = 53
 
@@ -303,7 +305,8 @@ final class OpenClickyNotchCaptureWindowManager {
         let collapsedWidth = Self.collapsedPanelWidth(for: preferredAnchorScreen(), appName: foregroundAppName)
         ensureCaptureContentView(width: collapsedWidth, height: Self.collapsedPanelHeight)
         let accentColor = Self.nsAccentColor(for: accentTheme)
-        persistentHasRunningAgentWork = Self.hasRunningAgentWork(in: companionManager)
+        persistentAgentLiveActivity = Self.agentLiveActivity(in: companionManager)
+        persistentHasRunningAgentWork = persistentAgentLiveActivity.isActive
         persistentAccentColor = accentColor
         persistentSubmitText = submitText
         persistentShowMainPanel = { [weak self, weak companionManager] in
@@ -316,7 +319,7 @@ final class OpenClickyNotchCaptureWindowManager {
             foregroundAppName: foregroundAppName,
             hasRunningAgentWork: persistentHasRunningAgentWork,
             hidesAppNameText: Self.hidesCollapsedAppNameText(on: preferredAnchorScreen()),
-            allowsHoverExpansion: preferredAnchorScreen().map { !Self.hasPhysicalNotch(on: $0) } ?? true,
+            allowsHoverExpansion: false,
             expand: { [weak self] in
                 self?.pinAnchorScreenToPointerIfNeeded()
                 self?.persistentShowMainPanel?()
@@ -336,27 +339,6 @@ final class OpenClickyNotchCaptureWindowManager {
             hideDynamicNotchKitStatusSurface()
             panel?.orderOut(nil)
         }
-        syncMirroredStatusPanels(
-            width: collapsedWidth,
-            height: Self.collapsedPanelHeight,
-            widthForScreen: { [weak self] screen in
-                Self.collapsedPanelWidth(for: screen, appName: self?.foregroundAppName ?? "Current app")
-            }
-        ) { [weak self] view, screen in
-            view.configureCollapsed(
-                accentColor: accentColor,
-                foregroundAppIcon: self?.foregroundAppIcon,
-                foregroundAppName: self?.foregroundAppName ?? "Current app",
-                hasRunningAgentWork: self?.persistentHasRunningAgentWork == true,
-                hidesAppNameText: Self.hidesCollapsedAppNameText(on: screen),
-                allowsHoverExpansion: !Self.hasPhysicalNotch(on: screen),
-                expand: { [weak self, weak screen] in
-                    if let screen { self?.anchorScreenOverride = screen }
-                    self?.persistentShowMainPanel?()
-                },
-                dismiss: {}
-            )
-        }
     }
 
     private func showDynamicNotchKitCollapsedIfAvailable(
@@ -373,6 +355,7 @@ final class OpenClickyNotchCaptureWindowManager {
             foregroundAppIcon: foregroundAppIcon,
             foregroundAppName: foregroundAppName,
             hasRunningAgentWork: hasRunningAgentWork,
+            agentLiveActivity: companionManager.map(Self.agentLiveActivity(in:)) ?? persistentAgentLiveActivity,
             openMainPanel: { [weak self] in
                 self?.pinAnchorScreenToPointerIfNeeded()
                 self?.persistentShowMainPanel?()
@@ -422,6 +405,7 @@ final class OpenClickyNotchCaptureWindowManager {
                 foregroundAppIcon: foregroundAppIcon,
                 foregroundAppName: foregroundAppName,
                 hasRunningAgentWork: persistentHasRunningAgentWork,
+                agentLiveActivity: persistentAgentLiveActivity,
                 openMainPanel: { [weak self] in
                     self?.pinAnchorScreenToPointerIfNeeded()
                     self?.persistentShowMainPanel?()
@@ -460,8 +444,23 @@ final class OpenClickyNotchCaptureWindowManager {
         isUsingDynamicNotchKitStatusSurface = false
     }
 
+    func updateAgentLiveActivity(companionManager: CompanionManager) {
+        let activity = Self.agentLiveActivity(in: companionManager)
+        persistentAgentLiveActivity = activity
+        persistentHasRunningAgentWork = activity.isActive
+
+        if isUsingDynamicNotchKitStatusSurface {
+            dynamicNotchKitBridge.updateAgentLiveActivity(activity)
+        }
+
+        guard activeMode == .collapsedText else { return }
+        contentView?.setAgentWorkActive(activity.isActive, foregroundAppName: foregroundAppName)
+        externalHoverStatusContentView?.setAgentWorkActive(activity.isActive, foregroundAppName: foregroundAppName)
+    }
+
     func showTextInput(accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
         hideDynamicNotchKitStatusSurface()
+        hideExternalHoverStatusPanel()
         let accentColor = Self.nsAccentColor(for: accentTheme)
         expandTextInput(accentColor: accentColor, submitText: submitText)
     }
@@ -491,13 +490,12 @@ final class OpenClickyNotchCaptureWindowManager {
                 foregroundAppIcon: foregroundAppIcon,
                 foregroundAppName: foregroundAppName,
                 hidesStatusText: hidesStatusText,
-                allowsHoverExpansion: primaryScreen.map { !Self.hasPhysicalNotch(on: $0) } ?? true,
+                allowsHoverExpansion: false,
                 expand: { [weak self] in
                     self?.pinAnchorScreenToPointerIfNeeded()
                     self?.persistentShowMainPanel?()
                 }
             )
-            let voiceWidth = Self.voicePanelWidth(for: primaryScreen, appName: foregroundAppName)
             let statusScreen = preferredPhysicalNotchStatusScreen()
             let isShowingDynamicNotchKitStatusSurface = showDynamicNotchKitVoiceIfAvailable(
                 voicePhase,
@@ -511,27 +509,6 @@ final class OpenClickyNotchCaptureWindowManager {
                 panel?.orderOut(nil)
             }
             startCollapsedHoverProbe()
-            syncMirroredStatusPanels(
-                width: voiceWidth,
-                height: Self.voicePanelHeight,
-                widthForScreen: { [weak self] screen in
-                    Self.voicePanelWidth(for: screen, appName: self?.foregroundAppName ?? "Current app")
-                }
-            ) { [weak self] view, screen in
-                view.configureVoice(
-                    phase: voicePhase,
-                    audioPowerLevel: audioPowerLevel,
-                    accentColor: Self.nsAccentColor(for: nil),
-                    foregroundAppIcon: self?.foregroundAppIcon,
-                    foregroundAppName: self?.foregroundAppName ?? "Current app",
-                    hidesStatusText: Self.hidesVoiceStatusText(on: screen),
-                    allowsHoverExpansion: !Self.hasPhysicalNotch(on: screen),
-                    expand: { [weak self, weak screen] in
-                        if let screen { self?.anchorScreenOverride = screen }
-                        self?.persistentShowMainPanel?()
-                    }
-                )
-            }
         }
     }
 
@@ -542,15 +519,15 @@ final class OpenClickyNotchCaptureWindowManager {
             dynamicNotchKitBridge.updateAudioPowerLevel(audioPowerLevel)
         }
         contentView?.updateAudioPowerLevel(audioPowerLevel)
-        mirroredStatusContentViews.values.forEach { $0.updateAudioPowerLevel(audioPowerLevel) }
+        externalHoverStatusContentView?.updateAudioPowerLevel(audioPowerLevel)
     }
 
     func hide() {
         panel?.orderOut(nil)
         hideDynamicNotchKitStatusSurface()
+        hideExternalHoverStatusPanel()
         hideMainPanel()
         stopCollapsedHoverProbe()
-        hideMirroredStatusPanels()
         activeMode = nil
         anchorScreenOverride = nil
     }
@@ -576,7 +553,7 @@ final class OpenClickyNotchCaptureWindowManager {
             foregroundAppName: foregroundAppName,
             hasRunningAgentWork: persistentHasRunningAgentWork,
             hidesAppNameText: Self.hidesCollapsedAppNameText(on: preferredAnchorScreen()),
-            allowsHoverExpansion: preferredAnchorScreen().map { !Self.hasPhysicalNotch(on: $0) } ?? true,
+            allowsHoverExpansion: false,
             expand: { [weak self] in
                 self?.pinAnchorScreenToPointerIfNeeded()
                 if let showMainPanel = self?.persistentShowMainPanel {
@@ -600,36 +577,11 @@ final class OpenClickyNotchCaptureWindowManager {
             hideDynamicNotchKitStatusSurface()
             panel?.orderOut(nil)
         }
-        syncMirroredStatusPanels(
-            width: collapsedWidth,
-            height: Self.collapsedPanelHeight,
-            widthForScreen: { [weak self] screen in
-                Self.collapsedPanelWidth(for: screen, appName: self?.foregroundAppName ?? "Current app")
-            }
-        ) { [weak self] view, screen in
-            view.configureCollapsed(
-                accentColor: accentColor,
-                foregroundAppIcon: self?.foregroundAppIcon,
-                foregroundAppName: self?.foregroundAppName ?? "Current app",
-                hasRunningAgentWork: self?.persistentHasRunningAgentWork == true,
-                hidesAppNameText: Self.hidesCollapsedAppNameText(on: screen),
-                allowsHoverExpansion: !Self.hasPhysicalNotch(on: screen),
-                expand: { [weak self, weak screen] in
-                    if let screen { self?.anchorScreenOverride = screen }
-                    if let showMainPanel = self?.persistentShowMainPanel {
-                        showMainPanel()
-                    } else {
-                        self?.expandTextInput(accentColor: accentColor, submitText: submitText)
-                    }
-                },
-                dismiss: {}
-            )
-        }
     }
 
     private func expandTextInput(accentColor: NSColor, submitText: @escaping (String) -> Void) {
         stopCollapsedHoverProbe()
-        hideMirroredStatusPanels()
+        hideExternalHoverStatusPanel()
         activeMode = .text
         persistentAccentColor = accentColor
         persistentSubmitText = submitText
@@ -649,6 +601,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func showMainPanel(companionManager: CompanionManager, focusedAgentSessionID: UUID? = nil) {
         stopCollapsedHoverProbe()
+        hideExternalHoverStatusPanel()
         pinAnchorScreenToPointerIfNeeded()
         ensureMainPanel()
         applyMainPanelResizeBehavior()
@@ -720,54 +673,6 @@ final class OpenClickyNotchCaptureWindowManager {
         mainHostingView = hostingView
         let fittingSize = preferredMainPanelSize()
         showMainPanelWindow(activating: true, width: fittingSize.width, height: fittingSize.height)
-    }
-
-    private func syncMirroredStatusPanels(
-        width _: CGFloat,
-        height _: CGFloat,
-        widthForScreen _: ((NSScreen) -> CGFloat)? = nil,
-        configure _: (OpenClickyNotchCaptureRootView, NSScreen) -> Void
-    ) {
-        // External displays must not get a fake notch or status island. Keep
-        // the status surface constrained to the physical MacBook notch path;
-        // any no-notch mirrored panels from an older run are explicitly torn down.
-        mirroredStatusPanels.values.forEach { $0.orderOut(nil) }
-        mirroredStatusPanels.removeAll()
-        mirroredStatusContentViews.removeAll()
-        refreshStatsHUD()
-    }
-
-    private func mirroredStatusPanel(for screen: NSScreen, width: CGFloat, height: CGFloat) -> OpenClickyNotchCapturePanel {
-        if let existing = mirroredStatusPanels[screen.displayID] {
-            return existing
-        }
-        let statusPanel = Self.makeStatusPanel(width: width, height: height)
-        let rootView = OpenClickyNotchCaptureRootView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-        rootView.autoresizingMask = [.width, .height]
-        let displayID = screen.displayID
-        rootView.onPillFrameChanged = { [weak self] _ in
-            self?.refreshStatsHUD()
-        }
-        rootView.onPillFrameCommitted = { [weak self, displayID] frame in
-            self?.userPillFrames[displayID] = frame
-            self?.persistUserPillFrames()
-            self?.refreshStatsHUD()
-        }
-        rootView.onHoverExpansionChanged = { [weak self, weak statusPanel, weak rootView, displayID] isExpanded in
-            guard let self,
-                  let statusPanel,
-                  let rootView,
-                  let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else { return }
-            self.setStatusSurfaceHoverExpanded(isExpanded, panel: statusPanel, view: rootView, screen: screen)
-        }
-        statusPanel.contentView = rootView
-        mirroredStatusPanels[screen.displayID] = statusPanel
-        mirroredStatusContentViews[screen.displayID] = rootView
-        return statusPanel
-    }
-
-    private func hideMirroredStatusPanels() {
-        mirroredStatusPanels.values.forEach { $0.orderOut(nil) }
     }
 
     private func showPanel(activating: Bool, width: CGFloat, height: CGFloat) {
@@ -878,18 +783,6 @@ final class OpenClickyNotchCaptureWindowManager {
                 return
             }
         }
-        for (displayID, mirroredPanel) in mirroredStatusPanels where mirroredPanel.isVisible {
-            if mirroredPanel.frame.contains(clickLocation) {
-                if let screen = mirroredPanel.screen, Self.hasPhysicalNotch(on: screen) {
-                    let localPoint = mirroredPanel.convertPoint(fromScreen: clickLocation)
-                    if let root = mirroredStatusContentViews[displayID], root.shellView.frame.contains(localPoint) {
-                        return
-                    }
-                } else {
-                    return
-                }
-            }
-        }
         hideMainPanel()
     }
 
@@ -985,12 +878,6 @@ final class OpenClickyNotchCaptureWindowManager {
             }
             self.refreshStatsHUD()
         }
-        rootView.onHoverExpansionChanged = { [weak self, weak rootView] isExpanded in
-            guard let self, let panel = self.panel, let rootView else { return }
-            let screen = panel.screen ?? self.preferredAnchorScreen() ?? NSScreen.main
-            guard let screen else { return }
-            self.setStatusSurfaceHoverExpanded(isExpanded, panel: panel, view: rootView, screen: screen)
-        }
         panel?.contentView = rootView
         contentView = rootView
         mainHostingView = nil
@@ -1051,18 +938,15 @@ final class OpenClickyNotchCaptureWindowManager {
         return hud
     }
 
-    // Builds one stats line per currently visible pill (primary + every
-    // mirror) so the HUD covers every screen the user might be working on.
+    // Builds one stats line for the currently visible primary pill.
     private func refreshStatsHUD() {
         let hud = ensureStatsHUD()
         var lines: [String] = []
         if let panel, panel.isVisible {
             lines.append(statsLine(for: panel, label: screenLabel(for: panel.screen)))
         }
-        let sortedMirrors = mirroredStatusPanels.sorted { $0.key < $1.key }
-        for (displayID, mirroredPanel) in sortedMirrors where mirroredPanel.isVisible {
-            let screen = NSScreen.screens.first { $0.displayID == displayID }
-            lines.append(statsLine(for: mirroredPanel, label: screenLabel(for: screen)))
+        if let externalHoverStatusPanel, externalHoverStatusPanel.isVisible {
+            lines.append(statsLine(for: externalHoverStatusPanel, label: screenLabel(for: externalHoverStatusPanel.screen)))
         }
         if lines.isEmpty { lines.append("no pills visible") }
         statsHUDLabel?.stringValue = lines.joined(separator: "\n")
@@ -1345,61 +1229,6 @@ final class OpenClickyNotchCaptureWindowManager {
         panel.setFrameOrigin(NSPoint(x: x, y: y))
     }
 
-    private func setStatusSurfaceHoverExpanded(_ isExpanded: Bool, panel: NSPanel, view: OpenClickyNotchCaptureRootView, screen: NSScreen) {
-        guard activeMode == .collapsedText || activeMode == .voice else { return }
-        guard !Self.hasPhysicalNotch(on: screen), mainPanel?.isVisible != true else {
-            view.setHoverExpanded(false, foregroundAppName: foregroundAppName, hasRunningAgentWork: persistentHasRunningAgentWork)
-            return
-        }
-
-        let baseWidth = activeMode == .voice
-            ? Self.voicePanelWidth(for: screen, appName: foregroundAppName)
-            : Self.collapsedPanelWidth(for: screen, appName: foregroundAppName)
-        let baseHeight = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
-        let baseSize = NSSize(width: baseWidth, height: baseHeight)
-        let targetSize: NSSize
-        if isExpanded {
-            let usableFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
-            targetSize = NSSize(
-                width: min(max(Self.hoverExpandedExternalPanelWidth, baseSize.width), usableFrame.width - (Self.screenEdgePadding * 2)),
-                height: Self.hoverExpandedExternalPanelHeight
-            )
-        } else {
-            targetSize = baseSize
-        }
-
-        let x: CGFloat
-        if isExpanded {
-            let usableFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
-            x = min(
-                max(Self.centeredX(for: targetSize, on: screen), usableFrame.minX + Self.screenEdgePadding),
-                usableFrame.maxX - targetSize.width - Self.screenEdgePadding
-            )
-        } else {
-            x = Self.centeredX(for: targetSize, on: screen)
-        }
-        let y = Self.statusLozengeY(for: targetSize, on: screen) - (isExpanded ? Self.hoverExpandedExternalTopInset : 0)
-
-        let targetFrame = NSRect(origin: NSPoint(x: x, y: y), size: targetSize)
-        if !isExpanded {
-            view.setHoverExpanded(false, foregroundAppName: foregroundAppName, hasRunningAgentWork: persistentHasRunningAgentWork)
-        }
-        NSAnimationContext.runAnimationGroup { context in
-            context.duration = 0.24
-            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.86, 0.22, 1.0)
-            context.allowsImplicitAnimation = true
-            view.setCanvas(size: targetSize, animated: true)
-            panel.animator().setFrame(targetFrame, display: true)
-        } completionHandler: {
-            if isExpanded {
-                view.setHoverExpanded(true, foregroundAppName: self.foregroundAppName, hasRunningAgentWork: self.persistentHasRunningAgentWork)
-            } else {
-                view.setHoverExpanded(false, foregroundAppName: self.foregroundAppName, hasRunningAgentWork: self.persistentHasRunningAgentWork)
-            }
-        }
-        refreshStatsHUD()
-    }
-
     private func positionMainPanel(size: NSSize) {
         guard !isMainPanelPinned, let mainPanel else { return }
         mainPanel.setFrameOrigin(mainPanelOrigin(for: size))
@@ -1432,8 +1261,10 @@ final class OpenClickyNotchCaptureWindowManager {
             )
             pillBottomY = Self.statusLozengeY(for: captureSize, on: screen)
         }
+        let opensFromPhysicalNotch = Self.hasPhysicalNotch(on: screen)
         let anchorY = min(pillBottomY, usableFrame.maxY)
-        let preferredY = anchorY - Self.mainPanelGapBelowCapture - size.height
+        let notchDownOffset = opensFromPhysicalNotch ? Self.mainPanelPhysicalNotchDownOffset : 0
+        let preferredY = anchorY - Self.mainPanelGapBelowCapture - notchDownOffset - size.height
         let minY = usableFrame.minY + Self.screenEdgePadding
         let y = max(preferredY, minY)
         return NSPoint(x: x, y: y)
@@ -1476,11 +1307,24 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func probeCollapsedNotchHover() {
         guard (activeMode == .collapsedText || activeMode == .voice), mainPanel?.isVisible != true else {
+            hideExternalHoverStatusPanel()
             stopCollapsedHoverProbe()
             return
         }
         let mouseLocation = NSEvent.mouseLocation
-        guard let hoveredScreen = NSScreen.screens.first(where: { Self.hasPhysicalNotch(on: $0) && Self.notchHoverRegion(on: $0).contains(mouseLocation) }) else { return }
+        if let externalHoverStatusPanel,
+           externalHoverStatusPanel.isVisible,
+           let statusScreen = externalHoverStatusPanel.screen ?? preferredAnchorScreen() ?? NSScreen.main ?? NSScreen.screens.first,
+           !externalHoverStatusPanel.frame.contains(mouseLocation),
+           !Self.notchHoverRegion(on: statusScreen).contains(mouseLocation) {
+            hideExternalHoverStatusPanel()
+        }
+        guard let hoveredScreen = NSScreen.screens.first(where: { Self.notchHoverRegion(on: $0).contains(mouseLocation) }) else { return }
+
+        if !Self.hasPhysicalNotch(on: hoveredScreen) {
+            showExternalHoverStatusPanel(on: hoveredScreen)
+            return
+        }
 
         if anchorScreenOverride?.displayID != hoveredScreen.displayID {
             anchorScreenOverride = hoveredScreen
@@ -1490,22 +1334,98 @@ final class OpenClickyNotchCaptureWindowManager {
             let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
             resizeAndReposition(width: width, height: height)
         }
-        if Self.hasPhysicalNotch(on: hoveredScreen) {
-            if showDynamicNotchKitStatusForCurrentModeIfAvailable(on: hoveredScreen, opensExpanded: true) {
-                panel?.orderOut(nil)
+        if showDynamicNotchKitStatusForCurrentModeIfAvailable(on: hoveredScreen, opensExpanded: true) {
+            panel?.orderOut(nil)
+        }
+    }
+
+    private func showExternalHoverStatusPanel(on screen: NSScreen) {
+        guard !Self.hasPhysicalNotch(on: screen), activeMode == .collapsedText || activeMode == .voice else { return }
+        anchorScreenOverride = screen
+
+        let panel = externalHoverStatusPanel ?? Self.makeStatusPanel(
+            width: Self.hoverExpandedExternalPanelWidth,
+            height: Self.hoverExpandedExternalPanelHeight
+        )
+        let rootView: OpenClickyNotchCaptureRootView
+        if let existing = externalHoverStatusContentView {
+            rootView = existing
+        } else {
+            rootView = OpenClickyNotchCaptureRootView(
+                frame: NSRect(
+                    x: 0,
+                    y: 0,
+                    width: Self.hoverExpandedExternalPanelWidth,
+                    height: Self.hoverExpandedExternalPanelHeight
+                )
+            )
+            rootView.autoresizingMask = [.width, .height]
+            rootView.onHoverExpansionChanged = { [weak self] isHovering in
+                guard !isHovering else { return }
+                self?.hideExternalHoverStatusPanel()
             }
-            return
+            panel.contentView = rootView
+            externalHoverStatusPanel = panel
+            externalHoverStatusContentView = rootView
         }
 
-        if let panel, panel.isVisible, panel.screen?.displayID == hoveredScreen.displayID, let contentView {
-            setStatusSurfaceHoverExpanded(true, panel: panel, view: contentView, screen: hoveredScreen)
-            return
-        }
+        let usableFrame = screen.visibleFrame.isEmpty ? screen.frame : screen.visibleFrame
+        let targetSize = NSSize(
+            width: min(Self.hoverExpandedExternalPanelWidth, usableFrame.width - (Self.screenEdgePadding * 2)),
+            height: Self.hoverExpandedExternalPanelHeight
+        )
+        let x = min(
+            max(Self.centeredX(for: targetSize, on: screen), usableFrame.minX + Self.screenEdgePadding),
+            usableFrame.maxX - targetSize.width - Self.screenEdgePadding
+        )
+        let y = Self.statusLozengeY(for: targetSize, on: screen) - Self.hoverExpandedExternalTopInset
+        let targetFrame = NSRect(origin: NSPoint(x: x, y: y), size: targetSize)
 
-        if let mirroredPanel = mirroredStatusPanels[hoveredScreen.displayID],
-           mirroredPanel.isVisible,
-           let mirroredView = mirroredStatusContentViews[hoveredScreen.displayID] {
-            setStatusSurfaceHoverExpanded(true, panel: mirroredPanel, view: mirroredView, screen: hoveredScreen)
+        rootView.setCanvas(size: targetSize, animated: false)
+        switch activeMode {
+        case .voice:
+            rootView.configureVoice(
+                phase: currentVoicePhase,
+                audioPowerLevel: currentAudioPowerLevel,
+                accentColor: Self.nsAccentColor(for: nil),
+                foregroundAppIcon: foregroundAppIcon,
+                foregroundAppName: foregroundAppName,
+                hidesStatusText: false,
+                allowsHoverExpansion: true,
+                expand: { [weak self] in
+                    self?.pinAnchorScreenToPointerIfNeeded()
+                    self?.persistentShowMainPanel?()
+                }
+            )
+        default:
+            rootView.configureCollapsed(
+                accentColor: persistentAccentColor,
+                foregroundAppIcon: foregroundAppIcon,
+                foregroundAppName: foregroundAppName,
+                hasRunningAgentWork: persistentHasRunningAgentWork,
+                hidesAppNameText: false,
+                allowsHoverExpansion: true,
+                expand: { [weak self] in
+                    self?.pinAnchorScreenToPointerIfNeeded()
+                    self?.persistentShowMainPanel?()
+                },
+                dismiss: {}
+            )
+        }
+        rootView.setHoverExpanded(true, foregroundAppName: foregroundAppName, hasRunningAgentWork: persistentHasRunningAgentWork)
+        panel.setFrame(targetFrame, display: true, animate: false)
+        panel.orderFrontRegardless()
+        if statsHUDPanel?.isVisible == true {
+            refreshStatsHUD()
+        }
+    }
+
+    private func hideExternalHoverStatusPanel() {
+        let wasVisible = externalHoverStatusPanel?.isVisible == true
+        externalHoverStatusPanel?.orderOut(nil)
+        externalHoverStatusContentView?.setHoverExpanded(false, foregroundAppName: foregroundAppName, hasRunningAgentWork: persistentHasRunningAgentWork)
+        if wasVisible || statsHUDPanel?.isVisible == true {
+            refreshStatsHUD()
         }
     }
 
@@ -1636,8 +1556,9 @@ final class OpenClickyNotchCaptureWindowManager {
         )
     }
 
-    private static func hasRunningAgentWork(in companionManager: CompanionManager) -> Bool {
-        companionManager.codexAgentSessions.contains { session in
+    private static func agentLiveActivity(in companionManager: CompanionManager) -> OpenClickyAgentLiveActivity {
+        let runningSessions = companionManager.codexAgentSessions.filter { session in
+            guard !companionManager.archivedSessionIDs.contains(session.id) else { return false }
             switch session.status {
             case .starting, .running:
                 return true
@@ -1645,6 +1566,24 @@ final class OpenClickyNotchCaptureWindowManager {
                 return false
             }
         }
+
+        guard let primary = runningSessions.first(where: { $0.id == companionManager.activeCodexAgentSessionID }) ?? runningSessions.last else {
+            return OpenClickyAgentLiveActivity()
+        }
+
+        let title = primary.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let detail = primary.latestActivitySummary?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return OpenClickyAgentLiveActivity(
+            isActive: true,
+            runningCount: runningSessions.count,
+            primaryTitle: title.isEmpty ? "Agent working" : title,
+            detail: detail?.isEmpty == false ? detail : nil,
+            phaseLabel: primary.progressStage.label
+        )
+    }
+
+    private static func hasRunningAgentWork(in companionManager: CompanionManager) -> Bool {
+        agentLiveActivity(in: companionManager).isActive
     }
 
     private static func preferredAnchorScreen() -> NSScreen? {
@@ -1779,7 +1718,7 @@ final class OpenClickyNotchCaptureWindowManager {
         }
         foregroundAppName = name
         contentView?.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
-        mirroredStatusContentViews.values.forEach { $0.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName) }
+        externalHoverStatusContentView?.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
         if isUsingDynamicNotchKitStatusSurface {
             dynamicNotchKitBridge.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
         }
@@ -1809,24 +1748,6 @@ final class OpenClickyNotchCaptureWindowManager {
         guard let primaryScreen else { return }
         let primaryWidth = widthForScreen(primaryScreen)
         resizeAndReposition(width: primaryWidth, height: height)
-        for (displayID, mirroredPanel) in mirroredStatusPanels {
-            guard let screen = NSScreen.screens.first(where: { $0.displayID == displayID }) else { continue }
-            // Skip the mirror's reflow if the user has locked it -- otherwise
-            // foreground-app switches would snap the dragged mirror back to
-            // the auto-centered position.
-            if let userFrame = userPillFrames[displayID] {
-                mirroredPanel.setFrame(userFrame, display: true, animate: false)
-                mirroredStatusContentViews[displayID]?.setCanvas(size: userFrame.size)
-                continue
-            }
-            let width = widthForScreen(screen)
-            let size = NSSize(width: width, height: height)
-            mirroredPanel.setFrame(NSRect(origin: mirroredPanel.frame.origin, size: size), display: true, animate: false)
-            mirroredStatusContentViews[displayID]?.setCanvas(size: size)
-            let x = Self.centeredX(for: size, on: screen)
-            let y = Self.statusLozengeY(for: size, on: screen)
-            mirroredPanel.setFrameOrigin(NSPoint(x: x, y: y))
-        }
         refreshStatsHUD()
     }
 
@@ -1844,7 +1765,7 @@ final class OpenClickyNotchCaptureWindowManager {
         let accentColor = Self.nsAccentColor(for: nil)
         persistentAccentColor = accentColor
         contentView?.updateAccentColor(accentColor)
-        mirroredStatusContentViews.values.forEach { $0.updateAccentColor(accentColor) }
+        externalHoverStatusContentView?.updateAccentColor(accentColor)
         if let glassBackdrop = mainPanelGlassBackdrop {
             glassBackdrop.configure(
                 cornerRadius: 28,
@@ -1879,7 +1800,7 @@ final class OpenClickyNotchCaptureWindowManager {
 
         applyToWindow(panel)
         applyToWindow(mainPanel)
-        mirroredStatusPanels.values.forEach { applyToWindow($0) }
+        applyToWindow(externalHoverStatusPanel)
     }
 
     static func nsAccentColor(for theme: ClickyAccentTheme?) -> NSColor {
@@ -2438,6 +2359,16 @@ private final class OpenClickyNotchCaptureRootView: NSView, NSTextFieldDelegate 
         collapsedAppNameLabel.isHidden = expanded || hidesCollapsedAppNameText || name.isEmpty || name == "Current app"
         hoverPreviewStack.alphaValue = expanded ? 1 : 0
         needsLayout = true
+        needsDisplay = true
+    }
+
+    func setAgentWorkActive(_ isActive: Bool, foregroundAppName: String) {
+        collapsedPlayIconView.isHidden = isActive
+        collapsedAgentDotsView.isHidden = !isActive
+        collapsedAgentDotsView.isActive = isActive
+        if isHoverExpanded {
+            setHoverExpanded(true, foregroundAppName: foregroundAppName, hasRunningAgentWork: isActive)
+        }
         needsDisplay = true
     }
 

@@ -2360,6 +2360,7 @@ final class CompanionManager: ObservableObject {
                     self.cancelPendingAgentDockItemRemoval(for: sessionID)
                 }
                 self.updateAgentDockItem(for: sessionID, status: status)
+                self.refreshNotchAgentLiveActivity()
                 self.scheduleWidgetSnapshotPublish()
                 self.scheduleRelaunchableAgentSessionsPersist()
                 self.updateAgentProgressNarration()
@@ -2381,6 +2382,7 @@ final class CompanionManager: ObservableObject {
         agentProgressStageCancellables[session.id] = session.$progressStage
             .receive(on: DispatchQueue.main)
             .sink { [weak self] _ in
+                self?.refreshNotchAgentLiveActivity()
                 self?.scheduleRelaunchableAgentSessionsPersist()
             }
 
@@ -2388,8 +2390,13 @@ final class CompanionManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self, sessionID = session.id] title in
                 self?.updateAgentDockTitle(for: sessionID, title: title)
+                self?.refreshNotchAgentLiveActivity()
                 self?.scheduleRelaunchableAgentSessionsPersist()
             }
+    }
+
+    private func refreshNotchAgentLiveActivity() {
+        notchCaptureWindowManager.updateAgentLiveActivity(companionManager: self)
     }
 
     private func persistRelaunchableAgentSessions() {
@@ -2434,6 +2441,7 @@ final class CompanionManager: ObservableObject {
                 self.pendingAgentActivityRefreshTasks[sessionID] = nil
                 guard let session = self.codexAgentSessions.first(where: { $0.id == sessionID }) else { return }
                 self.updateAgentDockItem(for: sessionID, status: session.status)
+                self.refreshNotchAgentLiveActivity()
                 self.scheduleWidgetSnapshotPublish()
                 self.updateAgentProgressNarration()
             }
@@ -2573,6 +2581,7 @@ final class CompanionManager: ObservableObject {
             agentDockWindowManager.hide()
         }
         refreshAgentDockFollowBehavior()
+        refreshNotchAgentLiveActivity()
         if activeCodexAgentSessionID == sessionID {
             if let next = codexAgentSessions.first(where: { !archivedSessionIDs.contains($0.id) }) {
                 selectCodexAgentSession(next.id)
@@ -2672,6 +2681,7 @@ final class CompanionManager: ObservableObject {
                 "title": closingSession.title
             ]
         )
+        refreshNotchAgentLiveActivity()
         scheduleWidgetSnapshotPublish()
         persistRelaunchableAgentSessions()
     }
@@ -8429,6 +8439,7 @@ final class CompanionManager: ObservableObject {
         let candidate = normalizedAgentTaskInstruction(from: transcript)
         let normalized = normalizedSpokenCommandText(candidate)
         guard wordCount(in: normalized) >= 3 else { return nil }
+        guard !isRawTransportDiagnosticEvent(candidate) else { return nil }
         guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
         guard !isVoiceRouteCapabilityQuestion(candidate) else { return nil }
         guard !isGenericWebSearchCapabilityQuestion(candidate) else { return nil }
@@ -8447,6 +8458,48 @@ final class CompanionManager: ObservableObject {
         guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
 
         return cleanedAgentTaskInstruction(candidate)
+    }
+
+    private static func isRawTransportDiagnosticEvent(_ transcript: String) -> Bool {
+        let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+
+        let rawTransportPrefixes = [
+            "/incoming]",
+            "/outgoing]",
+            "[incoming]",
+            "[outgoing]"
+        ]
+        let hasRawTransportPrefix = rawTransportPrefixes.contains { prefix in
+            trimmed.localizedCaseInsensitiveContains(prefix)
+        }
+
+        let rawCodexRPCSignals = [
+            "codex.rpc.message",
+            "codex.rpc.notification",
+            "codex.rpc.request",
+            #""method":"account/rateLimits/updated""#,
+            "account/rateLimits/updated"
+        ]
+        let hasRawCodexRPCSignal = rawCodexRPCSignals.contains { signal in
+            trimmed.localizedCaseInsensitiveContains(signal)
+        }
+        let hasRPCSummaryPayload = trimmed.localizedCaseInsensitiveContains(#""method":"#)
+            && trimmed.localizedCaseInsensitiveContains(#""paramsSummary""#)
+
+        guard hasRawTransportPrefix || hasRawCodexRPCSignal || hasRPCSummaryPayload else { return false }
+
+        let normalized = normalizedSpokenCommandText(trimmed)
+        let userIntentSignals = [
+            "fix this",
+            "look at this",
+            "what is this",
+            "whats this",
+            "what's this",
+            "see issue here",
+            "see the issue here"
+        ]
+        return !userIntentSignals.contains { normalized.hasPrefix($0) }
     }
 
     static func shouldEscalateVoiceResponseToAgent(responseText: String, transcript: String) -> Bool {
@@ -14283,3 +14336,24 @@ extension CompanionManager: BrowserWorkspaceAgentDelegate {
         return OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModel).provider == .anthropic
     }
 }
+
+#if DEBUG
+extension CompanionManager {
+    func setTestAgentDockItems(_ items: [ClickyAgentDockItem]) {
+        self.agentDockItems = items
+    }
+    
+    func setTestCodexAgentSessions(_ sessions: [CodexAgentSession]) {
+        self.codexAgentSessions = sessions
+    }
+    
+    func setTestHasMicrophonePermission(_ status: Bool) {
+        self.hasMicrophonePermission = status
+    }
+    
+    func setTestHasScreenContentPermission(_ status: Bool) {
+        self.hasScreenContentPermission = status
+    }
+}
+#endif
+

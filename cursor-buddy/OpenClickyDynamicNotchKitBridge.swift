@@ -1,6 +1,36 @@
 import AppKit
 import SwiftUI
 
+struct OpenClickyAgentLiveActivity: Equatable {
+    var isActive = false
+    var runningCount = 0
+    var primaryTitle: String?
+    var detail: String?
+    var phaseLabel: String?
+
+    var headline: String {
+        if runningCount > 1 { return "\(runningCount) agents working" }
+        let title = primaryTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !title.isEmpty { return title }
+        return isActive ? "Agent working" : ""
+    }
+
+    var subtitle: String {
+        let title = primaryTitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let phase = phaseLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let detail = detail?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let status: String
+        switch (phase.isEmpty, detail.isEmpty) {
+        case (false, false): status = "\(phase) · \(detail)"
+        case (false, true): status = phase
+        case (true, false): status = detail
+        case (true, true): status = runningCount > 1 ? "Multiple background agents are active" : "Background agent is active"
+        }
+        guard runningCount > 1, !title.isEmpty else { return status }
+        return "\(title) · \(status)"
+    }
+}
+
 #if canImport(DynamicNotchKit)
 import DynamicNotchKit
 import Combine
@@ -15,7 +45,8 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     @Published var mode: Mode = .collapsed
     @Published var foregroundAppIcon: NSImage?
     @Published var foregroundAppName = "Current app"
-    @Published var hasRunningAgentWork = false
+    @Published var agentLiveActivity = OpenClickyAgentLiveActivity()
+    var hasRunningAgentWork: Bool { agentLiveActivity.isActive }
     @Published var accentColor = NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1.0)
     @Published var audioPowerLevel: CGFloat = 0
     var openMainPanel: () -> Void = {}
@@ -55,14 +86,16 @@ final class OpenClickyDynamicNotchKitBridge {
         foregroundAppIcon: NSImage?,
         foregroundAppName: String,
         hasRunningAgentWork: Bool,
+        agentLiveActivity: OpenClickyAgentLiveActivity? = nil,
         openMainPanel: @escaping () -> Void,
         opensExpanded: Bool = false
     ) {
+        let liveActivity = agentLiveActivity ?? OpenClickyAgentLiveActivity()
         model.mode = .collapsed
         model.accentColor = accentColor
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
-        model.hasRunningAgentWork = hasRunningAgentWork
+        model.agentLiveActivity = liveActivity.isActive ? liveActivity : OpenClickyAgentLiveActivity(isActive: hasRunningAgentWork, runningCount: hasRunningAgentWork ? 1 : 0)
         model.openMainPanel = openMainPanel
         Task {
             if opensExpanded {
@@ -87,7 +120,6 @@ final class OpenClickyDynamicNotchKitBridge {
         model.accentColor = accentColor
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
-        model.hasRunningAgentWork = false
         model.audioPowerLevel = audioPowerLevel
         model.openMainPanel = openMainPanel
         Task {
@@ -106,6 +138,10 @@ final class OpenClickyDynamicNotchKitBridge {
     func updateForegroundApp(icon: NSImage?, name: String) {
         model.foregroundAppIcon = icon
         model.foregroundAppName = name
+    }
+
+    func updateAgentLiveActivity(_ activity: OpenClickyAgentLiveActivity) {
+        model.agentLiveActivity = activity
     }
 
     func open(on screen: NSScreen) {
@@ -132,9 +168,12 @@ private struct OpenClickyDynamicNotchKitCompactLeadingView: View {
         // the real MacBook notch. Keep each side deliberately wide so compact
         // mode reads as app icon | physical notch | voice/thinking indicator,
         // never as an "Ask OpenClicky" label squeezed into the notch area.
-        .frame(width: 76, height: 28, alignment: .leading)
+        .frame(width: 20, height: 28, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture { model.openNotch() }
+        .onHover { isHovering in
+            if isHovering { model.openNotch() }
+        }
         .accessibilityLabel(accessibilityAppName)
     }
 
@@ -167,9 +206,12 @@ private struct OpenClickyDynamicNotchKitCompactTrailingView: View {
         HStack {
             compactIndicator
         }
-        .frame(width: 76, height: 28, alignment: .trailing)
+        .frame(width: 20, height: 28, alignment: .trailing)
         .contentShape(Rectangle())
         .onTapGesture { model.openNotch() }
+        .onHover { isHovering in
+            if isHovering { model.openNotch() }
+        }
         .accessibilityLabel(indicatorLabel)
     }
 
@@ -180,8 +222,20 @@ private struct OpenClickyDynamicNotchKitCompactTrailingView: View {
             OpenClickyDynamicNotchKitMiniMeter(level: model.audioPowerLevel, color: Color(nsColor: model.accentColor))
                 .frame(width: 32, height: 16)
         case .collapsed:
-            OpenClickyDynamicNotchKitDots(color: Color(nsColor: model.accentColor))
-                .frame(width: 28, height: 12)
+            if model.hasRunningAgentWork {
+                HStack(spacing: 4) {
+                    OpenClickyDynamicNotchKitDots(color: Color(nsColor: model.accentColor))
+                        .frame(width: 28, height: 12)
+                    if model.agentLiveActivity.runningCount > 1 {
+                        Text("\(model.agentLiveActivity.runningCount)")
+                            .font(.system(size: 10, weight: .heavy))
+                            .foregroundStyle(.white.opacity(0.88))
+                    }
+                }
+            } else {
+                OpenClickyDynamicNotchKitDots(color: Color(nsColor: model.accentColor))
+                    .frame(width: 28, height: 12)
+            }
         }
     }
 
@@ -227,12 +281,16 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
                 OpenClickyDynamicNotchKitChip(title: "Open", systemImage: "arrow.up.right", accentColor: Color(nsColor: model.accentColor)) {
                     model.openMainPanel()
                 }
-                OpenClickyDynamicNotchKitChip(title: "Close", systemImage: "chevron.up", accentColor: .white.opacity(0.36)) {
-                    model.closeNotch()
-                }
             }
         }
         .padding(.vertical, 2)
+        .onHover { isHovering in
+            if isHovering {
+                model.openNotch()
+            } else {
+                model.closeNotch()
+            }
+        }
     }
 
     @ViewBuilder
@@ -255,7 +313,7 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
     private var expandedTitle: String {
         switch model.mode {
         case .collapsed:
-            if model.hasRunningAgentWork { return "Agent work running" }
+            if model.hasRunningAgentWork { return model.agentLiveActivity.headline }
             let name = model.foregroundAppName.trimmingCharacters(in: .whitespacesAndNewlines)
             return name.isEmpty || name == "Current app" ? "Current app" : name
         case .voice(let phase):
@@ -269,6 +327,9 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
     }
 
     private var expandedSubtitle: String {
+        if model.hasRunningAgentWork, case .collapsed = model.mode {
+            return model.agentLiveActivity.subtitle
+        }
         let name = model.foregroundAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty || name == "Current app" {
             return "Choose a control or open the panel"
@@ -329,12 +390,13 @@ private struct OpenClickyDynamicNotchKitMiniMeter: View {
 #else
 @MainActor
 final class OpenClickyDynamicNotchKitBridge {
-    func showCollapsed(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hasRunningAgentWork: Bool, openMainPanel: @escaping () -> Void, opensExpanded: Bool = false) {}
+    func showCollapsed(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hasRunningAgentWork: Bool, agentLiveActivity: OpenClickyAgentLiveActivity = OpenClickyAgentLiveActivity(), openMainPanel: @escaping () -> Void, opensExpanded: Bool = false) {}
     func showVoice(_ phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, openMainPanel: @escaping () -> Void, opensExpanded: Bool = false) {}
     func open(on screen: NSScreen) {}
     func close(on screen: NSScreen) {}
     func updateAudioPowerLevel(_ audioPowerLevel: CGFloat) {}
     func updateForegroundApp(icon: NSImage?, name: String) {}
+    func updateAgentLiveActivity(_ activity: OpenClickyAgentLiveActivity) {}
     func hide() {}
 }
 #endif

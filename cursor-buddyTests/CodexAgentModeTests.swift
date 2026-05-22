@@ -192,6 +192,14 @@ struct CodexAgentModeTests {
         #expect(genericWebInstruction == nil)
     }
 
+    @MainActor @Test func implicitAgentRoutingIgnoresRawCodexRPCEvents() throws {
+        let rateLimitNotification = #"/incoming] codex.rpc.message {"method":"account/rateLimits/updated","paramsSummary":{"keys":["rateLimits"]}}"#
+        let genericNotification = #"[incoming] codex.rpc.notification {"method":"thread/session/updated","paramsSummary":{"keys":["session"]}}"#
+
+        #expect(CompanionManager.implicitAgentTaskInstruction(from: rateLimitNotification) == nil)
+        #expect(CompanionManager.implicitAgentTaskInstruction(from: genericNotification) == nil)
+    }
+
     @MainActor @Test func implicitAgentRoutingKeepsLongBackgroundWorkAsAgentTasks() throws {
         let maybeInstruction = CompanionManager.implicitAgentTaskInstruction(
             from: "Summarize this GitHub issue and make a plan."

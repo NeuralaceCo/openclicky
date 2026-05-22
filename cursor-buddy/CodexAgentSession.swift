@@ -2390,3 +2390,15 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         return String(flattened[..<endIndex]).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
+
+#if DEBUG
+extension CodexAgentSession {
+    func setTestStatus(_ status: CodexAgentSessionStatus) {
+        self.status = status
+    }
+    func setTestLastErrorMessage(_ message: String?) {
+        self.lastErrorMessage = message
+    }
+}
+#endif
+

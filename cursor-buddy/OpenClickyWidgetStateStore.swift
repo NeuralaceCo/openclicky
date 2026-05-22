@@ -10,10 +10,12 @@ final class OpenClickyWidgetStateStore {
     nonisolated static let fallbackContainerName = "WidgetState"
 
     private let fileManager: FileManager
+    private let logStore: OpenClickyMessageLogStore
     private var pendingWriteTask: Task<Void, Never>?
 
-    init(fileManager: FileManager = .default) {
+    init(fileManager: FileManager = .default, logStore: OpenClickyMessageLogStore = .shared) {
         self.fileManager = fileManager
+        self.logStore = logStore
     }
 
     nonisolated static var snapshotURL: URL {
@@ -75,7 +77,7 @@ final class OpenClickyWidgetStateStore {
         var snapshot = Self.readSnapshot(fileManager: fileManager)
         guard snapshot.privacy.widgetsEnabled else { return }
 
-        let reviewText = (try? String(contentsOf: OpenClickyMessageLogStore.shared.reviewCommentsFile, encoding: .utf8)) ?? ""
+        let reviewText = (try? String(contentsOf: logStore.reviewCommentsFile, encoding: .utf8)) ?? ""
         let commentCount = reviewText.split(separator: "\n", omittingEmptySubsequences: true).count
         snapshot.generatedAt = Date()
         snapshot.todayStats.logReviewComments = commentCount
@@ -202,9 +204,9 @@ final class OpenClickyWidgetStateStore {
     }
 
     private func todayStats(from now: Date) -> OpenClickyWidgetTodayStats {
-        let logURL = OpenClickyMessageLogStore.shared.currentLogFile
+        let logURL = logStore.currentLogFile
         let logText = Self.readTailText(from: logURL, byteLimit: 128 * 1024)
-        let reviewText = (try? String(contentsOf: OpenClickyMessageLogStore.shared.reviewCommentsFile, encoding: .utf8)) ?? ""
+        let reviewText = (try? String(contentsOf: logStore.reviewCommentsFile, encoding: .utf8)) ?? ""
 
         return OpenClickyWidgetTodayStats(
             voiceInteractions: countOccurrences(of: "\"event\":\"voice.transcript\"", in: logText),
