@@ -465,7 +465,7 @@ final class MenuBarPanelManager: NSObject {
         if allowFittingSize,
            let panel,
            let contentView = panel.contentView {
-            contentView.layoutSubtreeIfNeeded()
+            contentView.needsLayout = true
             contentView.invalidateIntrinsicContentSize()
             let fittingHeight = ceil(contentView.fittingSize.height)
             if fittingHeight.isFinite, fittingHeight > 0 {
@@ -820,11 +820,7 @@ final class AgentMenuBarStatusManager: NSObject {
             return
         }
         guard let sessionID = item.sessionID else { return }
-        companionManager.selectCodexAgentSession(sessionID)
-        companionManager.notchCaptureWindowManager.showMainInterfacePanel(
-            companionManager: companionManager,
-            focusedAgentSessionID: sessionID
-        )
+        companionManager.showTextFollowUpForAgentSession(sessionID)
     }
 
     private func stopMenuBarAgent(_ item: ClickyAgentDockItem, companionManager: CompanionManager?) {

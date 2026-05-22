@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import OpenClickyCore
 
 struct OpenClickyAgentLiveActivity: Equatable {
     var isActive = false
@@ -41,6 +42,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     @Published var agentLiveActivity = OpenClickyAgentLiveActivity()
     var hasRunningAgentWork: Bool { agentLiveActivity.isActive }
     @Published var accentColor = NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1.0)
+    @Published var theme: ClickyTheme = .current
     @Published var audioPowerLevel: CGFloat = 0
     var openMainPanel: () -> Void = {}
     var openNotch: () -> Void = {}
@@ -103,6 +105,7 @@ final class OpenClickyDynamicNotchKitBridge {
         let liveActivity = agentLiveActivity ?? OpenClickyAgentLiveActivity()
         model.mode = .collapsed
         model.accentColor = accentColor
+        model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
         model.agentLiveActivity = liveActivity.isActive ? liveActivity : OpenClickyAgentLiveActivity(isActive: hasRunningAgentWork, runningCount: hasRunningAgentWork ? 1 : 0)
@@ -128,6 +131,7 @@ final class OpenClickyDynamicNotchKitBridge {
     ) {
         model.mode = .voice(phase)
         model.accentColor = accentColor
+        model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
         model.audioPowerLevel = audioPowerLevel
@@ -151,6 +155,7 @@ final class OpenClickyDynamicNotchKitBridge {
         submitText: @escaping (String) -> Void
     ) {
         model.accentColor = accentColor
+        model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
         model.submitText = submitText
@@ -171,6 +176,11 @@ final class OpenClickyDynamicNotchKitBridge {
     func updateForegroundApp(icon: NSImage?, name: String) {
         model.foregroundAppIcon = icon
         model.foregroundAppName = name
+    }
+
+    func updateTheme(accentColor: NSColor, theme: ClickyTheme) {
+        model.accentColor = accentColor
+        model.theme = theme
     }
 
     func updateAgentLiveActivity(_ activity: OpenClickyAgentLiveActivity) {
@@ -289,6 +299,7 @@ private struct OpenClickyDynamicNotchKitCompactTrailingView: View {
 
 private struct OpenClickyDynamicNotchKitExpandedView: View {
     @ObservedObject var model: OpenClickyDynamicNotchKitModel
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(spacing: 9) {
@@ -298,12 +309,12 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text(expandedTitle)
                         .font(.system(size: 14, weight: .heavy))
-                        .foregroundStyle(.white.opacity(0.98))
+                        .foregroundStyle(primaryTextColor.opacity(0.98))
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Text(expandedSubtitle)
                         .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.58))
+                        .foregroundStyle(primaryTextColor.opacity(0.58))
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
@@ -336,6 +347,14 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
                 model.closeNotchIfIdle()
             }
         }
+    }
+
+    private var primaryTextColor: Color {
+        usesLightTheme ? .black : .white
+    }
+
+    private var usesLightTheme: Bool {
+        model.theme == .light || (model.theme == .system && colorScheme == .light)
     }
 
     @ViewBuilder
@@ -388,6 +407,7 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
 /// the composed prompt through `model.submitText`.
 private struct OpenClickyDynamicNotchKitInputRow: View {
     @ObservedObject var model: OpenClickyDynamicNotchKitModel
+    @Environment(\.colorScheme) private var colorScheme
     @FocusState private var fieldFocused: Bool
 
     private static let imageExtensions: Set<String> = [
@@ -405,17 +425,17 @@ private struct OpenClickyDynamicNotchKitInputRow: View {
                     .font(.system(size: 11, weight: .heavy))
                     .foregroundStyle(Color(nsColor: model.accentColor))
 
-                TextField("Ask Clicky…", text: $model.draftText)
+                TextField("Ask OpenClicky…", text: $model.draftText)
                     .textFieldStyle(.plain)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(.white.opacity(0.95))
+                    .foregroundStyle(primaryTextColor.opacity(0.95))
                     .focused($fieldFocused)
                     .onSubmit(submit)
 
                 Button(action: pickAttachments) {
                     Image(systemName: "paperclip")
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(.white.opacity(0.66))
+                        .foregroundStyle(primaryTextColor.opacity(0.66))
                 }
                 .buttonStyle(.plain)
                 .help("Attach files")
@@ -430,10 +450,10 @@ private struct OpenClickyDynamicNotchKitInputRow: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
-            .background(.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+            .background(inputBackgroundColor, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(.white.opacity(0.10), lineWidth: 1)
+                    .strokeBorder(primaryTextColor.opacity(0.10), lineWidth: 1)
             )
         }
         .onChange(of: model.inputFocusRequest) { _, _ in
@@ -449,6 +469,18 @@ private struct OpenClickyDynamicNotchKitInputRow: View {
             fieldFocused = false
             model.closeNotch()
         }
+    }
+
+    private var primaryTextColor: Color {
+        usesLightTheme ? .black : .white
+    }
+
+    private var inputBackgroundColor: Color {
+        usesLightTheme ? .white.opacity(0.34) : .black.opacity(0.28)
+    }
+
+    private var usesLightTheme: Bool {
+        model.theme == .light || (model.theme == .system && colorScheme == .light)
     }
 
     private var attachmentChips: some View {
@@ -577,6 +609,7 @@ final class OpenClickyDynamicNotchKitBridge {
     func close(on screen: NSScreen) {}
     func updateAudioPowerLevel(_ audioPowerLevel: CGFloat) {}
     func updateForegroundApp(icon: NSImage?, name: String) {}
+    func updateTheme(accentColor: NSColor, theme: ClickyTheme) {}
     func updateAgentLiveActivity(_ activity: OpenClickyAgentLiveActivity) {}
     func hide() {}
 }

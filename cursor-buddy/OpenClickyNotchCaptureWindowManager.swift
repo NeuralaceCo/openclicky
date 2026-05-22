@@ -153,7 +153,7 @@ final class OpenClickyNotchCaptureWindowManager {
         }
         accentThemeObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
-            object: UserDefaults.standard,
+            object: nil,
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -1423,6 +1423,9 @@ final class OpenClickyNotchCaptureWindowManager {
         let accentColor = Self.nsAccentColor(for: nil)
         persistentAccentColor = accentColor
         contentView?.updateAccentColor(accentColor)
+        if isUsingDynamicNotchKitStatusSurface {
+            dynamicNotchKitBridge.updateTheme(accentColor: accentColor, theme: ClickyTheme.current)
+        }
         if let glassBackdrop = mainPanelGlassBackdrop {
             glassBackdrop.configure(
                 cornerRadius: 28,
@@ -1518,6 +1521,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
     private var dismiss: (() -> Void)?
     private var expand: (() -> Void)?
     private var accentColor = NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1.0)
+    private var pendingDeferredShellLayout = false
 
     private static let collapsedLabelMaxWidth: CGFloat = 300
 
@@ -1536,12 +1540,25 @@ private final class OpenClickyNotchCaptureRootView: NSView {
     }
 
     private func updateShellViewFillColor() {
+        let usesLightFill: Bool
+        switch ClickyTheme.current {
+        case .light:
+            usesLightFill = true
+        case .dark:
+            usesLightFill = false
+        case .system:
+            let bestMatch = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            usesLightFill = bestMatch != .darkAqua
+        }
+        let baseColor = usesLightFill ? NSColor.white : NSColor.black
+        let borderColor = usesLightFill ? NSColor.black : NSColor.white
         switch mode {
         case .collapsed:
-            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? NSColor.black.withAlphaComponent(0.34) : NSColor.black.withAlphaComponent(0.93)
+            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? baseColor.withAlphaComponent(usesLightFill ? 0.24 : 0.34) : baseColor.withAlphaComponent(usesLightFill ? 0.88 : 0.93)
         case .voice:
-            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? NSColor.black.withAlphaComponent(0.30) : NSColor.black.withAlphaComponent(0.91)
+            shellView.fillColor = OpenClickyLiquidGlassBackdropView.isLiquidGlassAvailable ? baseColor.withAlphaComponent(usesLightFill ? 0.21 : 0.30) : baseColor.withAlphaComponent(usesLightFill ? 0.86 : 0.91)
         }
+        shellView.borderColor = borderColor.withAlphaComponent(usesLightFill ? 0.11 : 0.07)
         needsDisplay = true
     }
 
@@ -1568,7 +1585,6 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         shellView.roundsTopCorners = false
         shellView.cornerRadius = 17
         updateShellViewFillColor()
-        shellView.borderColor = NSColor.white.withAlphaComponent(0.07)
         shellView.roundedShadowColor = nil
         shellView.roundedShadowBlurRadius = 0
         shellView.roundedShadowOffset = .zero
@@ -1604,7 +1620,6 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         collapsedAgentDotsView.isHidden = true
         shellView.cornerRadius = 17
         updateShellViewFillColor()
-        shellView.borderColor = NSColor.white.withAlphaComponent(0.07)
         shellView.roundedShadowColor = nil
         shellView.roundedShadowBlurRadius = 0
         shellView.roundedShadowOffset = .zero
@@ -1647,6 +1662,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         case .voice:
             shellGlassView.configure(cornerRadius: 17, roundsTopCorners: false, accentColor: accentColor, strength: .compact)
         }
+        updateShellViewFillColor()
         updateAccentColors()
         needsDisplay = true
     }
@@ -1753,7 +1769,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
                 self.voiceCopyStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
             }
             
-            self.layoutSubtreeIfNeeded()
+            self.scheduleDeferredShellLayout()
         }
 
         if animated && window.isVisible {
@@ -1769,6 +1785,26 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         
         updateTrackingAreas()
         window.invalidateCursorRects(for: self)
+    }
+
+    private func scheduleDeferredShellLayout() {
+        needsLayout = true
+        shellGlassView.needsLayout = true
+        shellView.needsLayout = true
+
+        guard !pendingDeferredShellLayout else { return }
+        pendingDeferredShellLayout = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.pendingDeferredShellLayout = false
+            self.needsLayout = true
+            self.shellGlassView.needsLayout = true
+            self.shellView.needsLayout = true
+            self.updateTrackingAreas()
+            if let window = self.window {
+                window.invalidateCursorRects(for: self)
+            }
+        }
     }
 
     private func buildViewHierarchy() {

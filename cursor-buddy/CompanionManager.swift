@@ -5377,12 +5377,9 @@ final class CompanionManager: ObservableObject {
     }
 
     func showQuickTextInputFromMenuBar() {
-        // The legacy expandTextInput surface (with the "Ask OpenClicky / Voice
-        // / Text / Agent" buttons) is retired. Route the status-menu and
-        // pill-tap entry points to the modern main panel instead.
-        guard allPermissionsGranted else { return }
-        guard !buddyDictationManager.isKeyboardShortcutSessionActiveOrFinalizing else { return }
-        notchCaptureWindowManager.showMainInterfacePanel(companionManager: self)
+        showNotchTextInput { [weak self] submittedText in
+            self?.submitNewAgentTaskFromUI(submittedText, source: "menu_bar_quick_task_prompt")
+        }
     }
 
     private func showMainOpenClickyPanelFromShortcut() {
@@ -10423,11 +10420,14 @@ final class CompanionManager: ObservableObject {
 
     func showTextFollowUpForAgentDockItem(_ itemID: UUID) {
         guard let sessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID else { return }
+        showTextFollowUpForAgentSession(sessionID)
+    }
+
+    func showTextFollowUpForAgentSession(_ sessionID: UUID) {
         selectCodexAgentSession(sessionID)
-        notchCaptureWindowManager.showMainInterfacePanel(
-            companionManager: self,
-            focusedAgentSessionID: sessionID
-        )
+        showNotchTextInput { [weak self] submittedText in
+            self?.submitTextFollowUp(submittedText, toAgentSessionID: sessionID)
+        }
     }
 
     func beginAgentDockDrag() {
