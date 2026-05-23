@@ -1,7 +1,7 @@
 ---
 name: openclicky-screen-control
 description: Instantly control OpenClicky's local overlay bridge to point on screen, show captions, or speak through OpenClicky's voice. Use when the user says "show me where you mean", "show me how to", "how do I do this", "point to it", "highlight that", "say this", or asks for visual on-screen guidance.
-version: 1.1.0
+version: 1.2.0
 argument-hint: "[what to show or say]"
 ---
 
@@ -120,23 +120,33 @@ If your runtime wants one generic tool-call shape, use:
 ```bash
 curl -s -X POST http://127.0.0.1:32123/mcp/call \
   -H 'Content-Type: application/json' \
-  -d '{"tool":"show_cursor","arguments":{"x":640,"y":520,"caption":"This one"}}'
+  -d '{"tool":"openclicky_point","arguments":{"x":640,"y":520,"caption":"This one"}}'
 ```
 
 Supported tool names:
-- `show_cursor`
-- `show_cursors`
+- `openclicky_point` (preferred single-target pointing tool)
+- `openclicky_point_many` (preferred multi-marker pointing tool)
+- `show_cursor` / `openclicky_show_cursor` (compatibility aliases)
+- `show_cursors` / `openclicky_show_cursors` (compatibility aliases)
 - `show_caption`
 - `screenshot`
 - `speak`
 - `clear`
+
+For multiple coordinated tool calls in one tutorial scene, use the batch endpoint:
+
+```bash
+curl -s -X POST http://127.0.0.1:32123/mcp/calls \
+  -H 'Content-Type: application/json' \
+  -d '{"calls":[{"tool":"clear","arguments":{}},{"tool":"openclicky_point","arguments":{"x":640,"y":520,"caption":"Start here"}},{"tool":"speak","arguments":{"text":"Start with this button."}}]}'
+```
 
 JSON-RPC style MCP calls are also accepted:
 
 ```bash
 curl -s -X POST http://127.0.0.1:32123/mcp \
   -H 'Content-Type: application/json' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"show_cursor","arguments":{"x":640,"y":520,"caption":"This one"}}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"openclicky_point","arguments":{"x":640,"y":520,"caption":"This one"}}}'
 ```
 
 ## SSE status stream
@@ -151,8 +161,8 @@ curl -N http://127.0.0.1:32123/events
 
 When the user says "show me where you mean", "show me how to", "how do I do this", "point to it", or similar:
 
-1. If you already know the coordinate, immediately call `/cursor` with the best available coordinate.
-2. If you do not know the coordinate, immediately call `/screenshot`, inspect it, then call `/cursor`.
+1. If you already know the coordinate, immediately call `openclicky_point` or `/cursor` with the best available coordinate.
+2. If you do not know the coordinate, immediately call `/screenshot`, inspect it, then call `openclicky_point` or `/cursor`.
 3. Keep captions short: 3-8 words is ideal.
 4. Do not start a new agent just to point.
 5. Do not narrate a long explanation first; show the on-screen cue first, then add text only if needed.

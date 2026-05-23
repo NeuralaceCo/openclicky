@@ -8,5 +8,5 @@
 
 ## When the user asks about OpenClicky internals
 
-- Read SOUL.md, the runtime map, persistent memory, learned skills, logs, widget snapshot.
+- The agent persona (soul) is already loaded into the system context. Read the runtime map, persistent memory, learned skills, logs, and widget snapshot from disk as needed.
 - Cite exact paths.

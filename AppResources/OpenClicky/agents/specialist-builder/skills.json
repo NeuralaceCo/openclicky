@@ -1,0 +1,11 @@
+{
+  "enabledSkillIDs" : [
+    "openclicky-specialist-agents",
+    "skill-creator",
+    "skill-installer",
+    "find-skills",
+    "codex",
+    "openclicky-repo-operator",
+    "optimize-openclicky-skills"
+  ]
+}
