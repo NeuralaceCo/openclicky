@@ -126,6 +126,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     @Published var isExpanded = false
     @Published var contextSuggestion: OpenClickyNotchContextSuggestion?
     var hidesWhenClosed = false
+    var onHiddenWhenClosed: (() -> Void)?
     /// Bumped to ask the expanded input row to take keyboard focus.
     @Published var inputFocusRequest = 0
     var submitText: (String) -> Void = { _ in }
@@ -413,7 +414,10 @@ final class OpenClickyDynamicNotchKitBridge {
             self.model.isExpanded = false
             let screen = self.currentTargetScreen()
             if self.model.hidesWhenClosed {
-                Task { await self.hideNotchIfNeeded() }
+                Task {
+                    await self.hideNotchIfNeeded()
+                    self.model.onHiddenWhenClosed?()
+                }
             } else {
                 Task { await self.compactNotch(on: screen) }
             }
@@ -472,6 +476,7 @@ final class OpenClickyDynamicNotchKitBridge {
     ) {
         let liveActivity = agentLiveActivity ?? OpenClickyAgentLiveActivity()
         model.hidesWhenClosed = false
+        model.onHiddenWhenClosed = nil
         model.mode = .collapsed
         model.contextSuggestion = nil
         model.accentColor = accentColor
@@ -504,6 +509,7 @@ final class OpenClickyDynamicNotchKitBridge {
         opensExpanded: Bool = false
     ) {
         model.hidesWhenClosed = false
+        model.onHiddenWhenClosed = nil
         model.mode = .voice(phase)
         model.contextSuggestion = nil
         model.accentColor = accentColor
@@ -532,9 +538,12 @@ final class OpenClickyDynamicNotchKitBridge {
         foregroundAppIcon: NSImage?,
         foregroundAppName: String,
         submitText: @escaping (String) -> Void,
-        hidesWhenClosed: Bool = false
+        hidesWhenClosed: Bool = false,
+        focusesInput: Bool = true,
+        onHiddenWhenClosed: (() -> Void)? = nil
     ) {
         model.hidesWhenClosed = hidesWhenClosed
+        model.onHiddenWhenClosed = hidesWhenClosed ? onHiddenWhenClosed : nil
         model.contextSuggestion = nil
         model.accentColor = accentColor
         model.theme = .current
@@ -544,6 +553,7 @@ final class OpenClickyDynamicNotchKitBridge {
         model.isExpanded = true
         Task {
             await expandNotch(on: screen)
+            guard focusesInput else { return }
             notch.windowController?.window?.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             // Let SwiftUI lay out the expanded view before requesting focus.
@@ -816,8 +826,10 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
                     systemImage: "rectangle.inset.filled",
                     accentColor: Color(nsColor: model.activityAccentColor)
                 ) {
+                    // showMainPanel owns closing the notch/status surface. Calling
+                    // closeNotch() here can race the hide and compact the notch
+                    // back over the main panel.
                     model.openMainPanel()
-                    model.closeNotch()
                 }
 
                 OpenClickyDynamicNotchKitChip(
@@ -1321,7 +1333,7 @@ private struct OpenClickyDynamicNotchKitMiniMeter: View {
 final class OpenClickyDynamicNotchKitBridge {
     func showCollapsed(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hasRunningAgentWork: Bool, agentLiveActivity: OpenClickyAgentLiveActivity = OpenClickyAgentLiveActivity(), openMainPanel: @escaping () -> Void, submitText: @escaping (String) -> Void = { _ in }, opensExpanded: Bool = false) {}
     func showVoice(_ phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, openMainPanel: @escaping () -> Void, submitText: @escaping (String) -> Void = { _ in }, opensExpanded: Bool = false) {}
-    func showTextInput(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void, hidesWhenClosed: Bool = false) {}
+    func showTextInput(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void, hidesWhenClosed: Bool = false, focusesInput: Bool = true, onHiddenWhenClosed: (() -> Void)? = nil) {}
     func showContextSuggestion(_ suggestion: OpenClickyNotchContextSuggestion, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void) {}
     func open(on screen: NSScreen) {}
     func close(on screen: NSScreen) {}

@@ -366,14 +366,28 @@ final class OpenClickyNotchCaptureWindowManager {
         // expanded view rather than the standalone capture panel.
         panel?.orderOut(nil)
         isUsingDynamicNotchKitStatusSurface = true
+        let hidesWhenClosed = !Self.hasPhysicalNotch(on: screen)
         dynamicNotchKitBridge.showTextInput(
             on: screen,
             accentColor: accentColor,
             foregroundAppIcon: foregroundAppIcon,
             foregroundAppName: foregroundAppName,
             submitText: submitText,
-            hidesWhenClosed: !Self.hasPhysicalNotch(on: screen)
+            hidesWhenClosed: hidesWhenClosed,
+            onHiddenWhenClosed: hidesWhenClosed ? { [weak self, weak screen] in
+                guard let screen else { return }
+                self?.restoreFallbackPillAfterExternalInput(on: screen)
+            } : nil
         )
+    }
+
+
+    private func restoreFallbackPillAfterExternalInput(on screen: NSScreen) {
+        guard !Self.hasPhysicalNotch(on: screen), mainPanel?.isVisible != true else { return }
+        guard let submitText = persistentSubmitText else { return }
+        anchorScreenOverride = screen
+        isUsingDynamicNotchKitStatusSurface = false
+        collapseToPill(accentColor: persistentAccentColor, submitText: submitText)
     }
 
     func showShortcutInput(accentTheme: ClickyAccentTheme? = nil, submitText: @escaping (String) -> Void) {
@@ -517,6 +531,8 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func showMainPanel(companionManager: CompanionManager, focusedAgentSessionID: UUID? = nil) {
         stopCollapsedHoverProbe()
+        panel?.orderOut(nil)
+        hideDynamicNotchKitStatusSurface()
         pinAnchorScreenToActiveInteractionIfNeeded()
         ensureMainPanel()
         applyMainPanelResizeBehavior()
@@ -1180,6 +1196,7 @@ final class OpenClickyNotchCaptureWindowManager {
             showFallbackStatusPanel(width: width, height: height)
         }
     }
+
 
     private static func notchHoverRegion(on screen: NSScreen) -> NSRect {
         let baseWidth = collapsedPanelWidth(for: screen) + 28
@@ -2022,6 +2039,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         guard mode == .collapsed || mode == .voice else { return }
+        guard let screen = window?.screen, OpenClickyNotchCaptureWindowManager.hasPhysicalNotch(on: screen) else { return }
         let localPoint = convert(event.locationInWindow, from: nil)
         guard shellView.frame.contains(localPoint) else { return }
         expand?()

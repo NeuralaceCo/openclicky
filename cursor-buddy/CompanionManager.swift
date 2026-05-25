@@ -1606,27 +1606,6 @@ final class CompanionManager: ObservableObject {
         set { UserDefaults.standard.set(newValue, forKey: "hasCompletedOnboarding") }
     }
 
-    /// Whether the user has submitted their email during onboarding.
-    @Published var hasSubmittedEmail: Bool = UserDefaults.standard.bool(forKey: "hasSubmittedEmail")
-
-    /// Submits the user's email to FormSpark.
-    func submitEmail(_ email: String) {
-        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedEmail.isEmpty else { return }
-
-        hasSubmittedEmail = true
-        UserDefaults.standard.set(true, forKey: "hasSubmittedEmail")
-
-        // Submit to FormSpark
-        Task {
-            var request = URLRequest(url: URL(string: "https://submit-form.com/RWbGJxmIs")!)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try? JSONSerialization.data(withJSONObject: ["email": trimmedEmail])
-            _ = try? await URLSession.shared.data(for: request)
-        }
-    }
-
     func start() {
         loadBundledKnowledgeIndex()
         refreshAllPermissions()
@@ -10508,8 +10487,8 @@ final class CompanionManager: ObservableObject {
     }
 
     func stopAgentDockItem(_ itemID: UUID) {
-        let stoppedSessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID
-        if let stoppedSessionID {
+        if let stoppedSessionID = agentDockItems.first(where: { $0.id == itemID })?.sessionID
+            ?? codexAgentSessions.first(where: { $0.id == itemID })?.id {
             cancelAgentTask(sessionID: stoppedSessionID, removeDockItems: true, reason: "agent_dock_stop")
             lastNarratedAgentOutcomeBySessionID.removeValue(forKey: stoppedSessionID)
         } else {
@@ -11550,10 +11529,19 @@ final class CompanionManager: ObservableObject {
         """
     }
 
+    private func currentAppSkillContextPrompt() -> String {
+        guard let context = OpenClickyAppSkillContext.contextForFrontmostApplication() else {
+            return "No app-specific skill context is active."
+        }
+        return context.promptFragment
+    }
+
     private func currentVoiceResponseSystemPrompt() -> String {
         let memoryContext = codexHomeManager.persistentMemoryContext()
         return """
         \(Self.companionVoiceResponseSystemPrompt)
+
+        \(currentAppSkillContextPrompt())
 
         \(runtimeStorageContextForVoicePrompt())
 
@@ -11570,12 +11558,22 @@ final class CompanionManager: ObservableObject {
         return """
         \(Self.companionRealtimeVoiceSystemPrompt)
 
+        \(currentAppSkillContextPrompt())
+
         \(runtimeStorageContextForVoicePrompt())
 
         persistent memory:
         read this as durable user/project context. do not say you cannot remember outside the conversation; use this memory.
 
         \(memoryContext)
+        """
+    }
+
+    private func currentTutorModeSystemPrompt() -> String {
+        """
+        \(Self.tutorModeSystemPrompt)
+
+        \(currentAppSkillContextPrompt())
         """
     }
 
@@ -12325,7 +12323,7 @@ final class CompanionManager: ObservableObject {
 
             let fullResponseText = try await analyzeVoiceResponse(
                 images: labeledImages,
-                systemPrompt: Self.tutorModeSystemPrompt,
+                systemPrompt: self.currentTutorModeSystemPrompt(),
                 conversationHistory: historyForAPI,
                 userPrompt: "observe the focused window and guide me to the next useful learning step.",
                 onTextChunk: { _ in }

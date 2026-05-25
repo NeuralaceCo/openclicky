@@ -447,19 +447,38 @@ struct ClickyAgentDockHoverCard: View {
     @ViewBuilder
     private var terminalActionButton: some View {
         if item.status == .starting || item.status == .running {
-            Button {
-                isConfirmingStop = true
-            } label: {
-                Image(systemName: "stop.circle")
-                    .font(.system(size: 12, weight: .semibold))
-                    .frame(width: 14, height: 14)
-            }
-            .accessibilityLabel("Stop")
-            .help("Stop")
-            .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
-            .confirmationDialog("Stop this agent?", isPresented: $isConfirmingStop, titleVisibility: .visible) {
-                Button("Stop", role: .destructive, action: stop)
-                Button("Keep running", role: .cancel) {}
+            if isConfirmingStop {
+                HStack(spacing: 6) {
+                    Button {
+                        isConfirmingStop = false
+                        stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: true))
+                    .accessibilityLabel("Confirm stop")
+                    .help("Stop this OpenClicky task")
+
+                    Button {
+                        isConfirmingStop = false
+                    } label: {
+                        Text("Keep")
+                    }
+                    .buttonStyle(ClickyAgentDockPillButtonStyle())
+                    .accessibilityLabel("Keep running")
+                    .help("Keep this OpenClicky task running")
+                }
+            } else {
+                Button {
+                    isConfirmingStop = true
+                } label: {
+                    Image(systemName: "stop.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                        .frame(width: 14, height: 14)
+                }
+                .accessibilityLabel("Stop")
+                .help("Stop")
+                .buttonStyle(ClickyAgentDockStopButtonStyle(isConfirming: false))
             }
         } else if item.status == .done || item.status == .failed {
             Button(action: dismiss) {
