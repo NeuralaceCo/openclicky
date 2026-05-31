@@ -8262,12 +8262,13 @@ final class CompanionManager: ObservableObject {
            ),
            let targetRange = Range(match.range(at: 1), in: trimmedTranscript) {
             let rawTarget = String(trimmedTranscript[targetRange])
-            let normalizedTarget = normalizedApplicationName(from: rawTarget)
+            let cleanedTarget = cleanedApplicationOpenTarget(rawTarget)
+            let normalizedTarget = normalizedApplicationName(from: cleanedTarget)
             guard !normalizedTarget.isEmpty,
-                  !isReservedAgentOpenTarget(rawTarget),
+                  !isReservedAgentOpenTarget(cleanedTarget),
                   !isLocalAppOpenPlaceholder(normalizedTarget),
-                  !isLikelyFileOrFolderOpenTarget(rawTarget),
-                  !isLikelyWebOpenTarget(rawTarget) else {
+                  !isLikelyFileOrFolderOpenTarget(cleanedTarget),
+                  !isLikelyWebOpenTarget(cleanedTarget) else {
                 return nil
             }
 
@@ -8322,6 +8323,7 @@ final class CompanionManager: ObservableObject {
             "Reminders",
             "Calendar",
             "Slack",
+            "Spotify",
             "Cursor",
             "GitHub Desktop",
             "Codex":
@@ -9143,6 +9145,22 @@ final class CompanionManager: ObservableObject {
         return candidate.trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-–—…"))
     }
 
+    private static func cleanedApplicationOpenTarget(_ rawTarget: String) -> String {
+        var target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trailingActionPatterns = [
+            #"(?i)\s+(?:and|then)\s+(?:play|search|find|look\s+up|type|write|enter|press|hit|click|tap|select|choose|go\s+to|navigate\s+to|browse\s+to|visit)\b.*$"#,
+            #"(?i)\s+to\s+(?:play|search|find|look\s+up|type|write|enter|press|hit|click|tap|select|choose)\b.*$"#
+        ]
+        for pattern in trailingActionPatterns {
+            target = target.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: .regularExpression
+            )
+        }
+        return target.trimmingCharacters(in: CharacterSet(charactersIn: " \n\t.,:;!?-–—…"))
+    }
+
     private static func normalizedApplicationName(from rawTarget: String) -> String {
         var target = rawTarget.trimmingCharacters(in: .whitespacesAndNewlines)
         target = target.trimmingCharacters(in: CharacterSet(charactersIn: ".,:;!?-–— "))
@@ -9189,6 +9207,8 @@ final class CompanionManager: ObservableObject {
             return "Calendar"
         case "slack":
             return "Slack"
+        case "spotify":
+            return "Spotify"
         case "cursor":
             return "Cursor"
         case "codex":
@@ -14329,6 +14349,10 @@ extension CompanionManager {
     
     func setTestHasScreenContentPermission(_ status: Bool) {
         self.hasScreenContentPermission = status
+    }
+
+    static func testLocalAppOpenTarget(from transcript: String) -> String? {
+        localAppOpenRequest(from: transcript)?.appName
     }
 }
 #endif

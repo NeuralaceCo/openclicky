@@ -30,11 +30,11 @@ nonisolated struct OpenClickyModelOption: Identifiable, Equatable {
 }
 
 nonisolated enum OpenClickyModelCatalog {
-    /// Fast conversational responder. Used for the always-on voice loop —
-    /// hears you, decides whether to delegate, narrates progress.
-    /// Haiku 4.5 has ~150-250ms TTFT vs ~400-600ms for Sonnet.
-    static let defaultVoiceResponseModelID = "claude-haiku-4-5"
     static let defaultSpeechModelID = "gpt-realtime-2"
+    /// Fast conversational responder. Used for the always-on voice loop —
+    /// hears the user, routes direct computer-use locally, and delegates
+    /// background work to the configured Codex model.
+    static let defaultVoiceResponseModelID = defaultSpeechModelID
     static let defaultCodexActionsModelID = "gpt-5.4"
     /// Heavier model used when the voice responder delegates a coding/agent task.
     /// Coding work goes here; the voice path stays on the fast model.

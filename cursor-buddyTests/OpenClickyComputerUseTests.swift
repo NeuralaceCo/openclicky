@@ -67,4 +67,22 @@ struct OpenClickyComputerUseTests {
         #expect(window.agentContextNote == "CUA Swift target window id 77, pid 2468, owner Xcode, title ContentView.swift, bounds x:12 y:40 width:900 height:700, z-index 20.")
         #expect(window.captureLabel == "CUA Swift focused window (Xcode - ContentView.swift)")
     }
+
+    @Test func realtimeCompositeAppCommandKeepsOnlyTheAppTarget() throws {
+        #expect(
+            CompanionManager.testLocalAppOpenTarget(
+                from: "Can you open Spotify and play AC/DC Back to Black?"
+            ) == "Spotify"
+        )
+        #expect(
+            CompanionManager.testLocalAppOpenTarget(
+                from: "Open Chrome and go to amazon.co.uk"
+            ) == nil
+        )
+    }
+
+    @Test func realtimeTwoIsTheDefaultVoiceInteractionModel() throws {
+        #expect(OpenClickyModelCatalog.defaultVoiceResponseModelID == "gpt-realtime-2")
+        #expect(OpenClickyModelCatalog.defaultCodexActionsModelID != OpenClickyModelCatalog.defaultVoiceResponseModelID)
+    }
 }
