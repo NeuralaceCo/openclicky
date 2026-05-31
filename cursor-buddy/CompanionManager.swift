@@ -10,6 +10,7 @@
 @preconcurrency import AVFoundation
 import AppKit
 import Combine
+import CoreAudio
 import Foundation
 import ScreenCaptureKit
 import SwiftUI
@@ -188,6 +189,161 @@ nonisolated private enum OpenClickyLocalAutomationRunner {
     }
 }
 
+nonisolated private enum OpenClickySystemOutputVolume {
+    static func currentScalar() -> Float? {
+        guard let deviceID = defaultOutputDeviceID() else { return nil }
+        if let master = scalar(for: deviceID, element: kAudioObjectPropertyElementMain) {
+            return master
+        }
+
+        let channels = [AudioObjectPropertyElement(1), AudioObjectPropertyElement(2)]
+            .compactMap { scalar(for: deviceID, element: $0) }
+        guard !channels.isEmpty else { return nil }
+        return channels.reduce(0, +) / Float(channels.count)
+    }
+
+    @discardableResult
+    static func setScalar(_ scalar: Float) -> Bool {
+        guard let deviceID = defaultOutputDeviceID() else { return false }
+        let clampedScalar = min(max(scalar, 0), 1)
+        if setScalar(clampedScalar, for: deviceID, element: kAudioObjectPropertyElementMain) {
+            return true
+        }
+
+        let channels = [AudioObjectPropertyElement(1), AudioObjectPropertyElement(2)]
+        return channels
+            .map { setScalar(clampedScalar, for: deviceID, element: $0) }
+            .contains(true)
+    }
+
+    private static func defaultOutputDeviceID() -> AudioDeviceID? {
+        var deviceID = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultOutputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject),
+            &address,
+            0,
+            nil,
+            &size,
+            &deviceID
+        )
+        guard status == 0, deviceID != AudioDeviceID(kAudioObjectUnknown) else { return nil }
+        return deviceID
+    }
+
+    private static func scalar(for deviceID: AudioDeviceID, element: AudioObjectPropertyElement) -> Float? {
+        var address = volumeAddress(element: element)
+        guard AudioObjectHasProperty(deviceID, &address) else { return nil }
+        var value = Float32(0)
+        var size = UInt32(MemoryLayout<Float32>.size)
+        let status = AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &value)
+        guard status == 0 else { return nil }
+        return Float(value)
+    }
+
+    private static func setScalar(
+        _ scalar: Float,
+        for deviceID: AudioDeviceID,
+        element: AudioObjectPropertyElement
+    ) -> Bool {
+        var address = volumeAddress(element: element)
+        guard AudioObjectHasProperty(deviceID, &address) else { return false }
+        var settable: DarwinBoolean = false
+        guard AudioObjectIsPropertySettable(deviceID, &address, &settable) == 0,
+              settable.boolValue else {
+            return false
+        }
+
+        var value = Float32(scalar)
+        let size = UInt32(MemoryLayout<Float32>.size)
+        return AudioObjectSetPropertyData(deviceID, &address, 0, nil, size, &value) == 0
+    }
+
+    private static func volumeAddress(element: AudioObjectPropertyElement) -> AudioObjectPropertyAddress {
+        AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalar,
+            mScope: kAudioDevicePropertyScopeOutput,
+            mElement: element
+        )
+    }
+}
+
+@MainActor
+private final class OpenClickyWakeWordAudioDucker {
+    private let duckedVolume: Float = 0.08
+    private var restoreVolume: Float?
+    private var isDucked = false
+
+    func duck(reason: String) {
+        guard !isDucked else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "internal",
+                event: "voice.wake_word.audio_duck_unchanged",
+                fields: ["reason": reason]
+            )
+            return
+        }
+
+        guard let currentVolume = OpenClickySystemOutputVolume.currentScalar() else {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "voice",
+                direction: "error",
+                event: "voice.wake_word.audio_duck_failed",
+                fields: [
+                    "reason": reason,
+                    "error": "default_output_volume_unavailable"
+                ]
+            )
+            return
+        }
+
+        restoreVolume = currentVolume
+        isDucked = true
+        let targetVolume = min(currentVolume, duckedVolume)
+        let didApply = currentVolume <= duckedVolume || OpenClickySystemOutputVolume.setScalar(targetVolume)
+        if !didApply {
+            restoreVolume = nil
+            isDucked = false
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: didApply ? "internal" : "error",
+            event: didApply ? "voice.wake_word.audio_ducked" : "voice.wake_word.audio_duck_failed",
+            fields: [
+                "reason": reason,
+                "previousVolume": currentVolume,
+                "targetVolume": targetVolume
+            ]
+        )
+    }
+
+    func restore(reason: String) {
+        guard isDucked else { return }
+        let previousVolume = restoreVolume
+        restoreVolume = nil
+        isDucked = false
+
+        guard let previousVolume else { return }
+        let didRestore = OpenClickySystemOutputVolume.setScalar(previousVolume)
+        OpenClickyMessageLogStore.shared.append(
+            lane: "voice",
+            direction: didRestore ? "internal" : "error",
+            event: didRestore ? "voice.wake_word.audio_restored" : "voice.wake_word.audio_restore_failed",
+            fields: [
+                "reason": reason,
+                "restoredVolume": previousVolume
+            ]
+        )
+    }
+}
+
 @MainActor
 final class CompanionManager: ObservableObject {
     let cursorOverlayState = CursorOverlayState()
@@ -197,6 +353,7 @@ final class CompanionManager: ObservableObject {
             notchCaptureWindowManager.updateVoiceState(Self.notchVoicePhase(for: voiceState), audioPowerLevel: currentAudioPowerLevel)
             if voiceState == .idle, oldValue != .idle {
                 scheduleVoiceResponseCaptionClear(after: 1.2)
+                wakeWordAudioDucker.restore(reason: "voice_idle")
                 scheduleWakeWordListeningResumeIfNeeded(reason: "voice_idle")
             }
         }
@@ -282,6 +439,7 @@ final class CompanionManager: ObservableObject {
 
     let buddyDictationManager = BuddyDictationManager()
     let wakeWordManager = OpenClickyWakeWordManager()
+    private let wakeWordAudioDucker = OpenClickyWakeWordAudioDucker()
     let globalPushToTalkShortcutMonitor = GlobalPushToTalkShortcutMonitor()
     let overlayWindowManager = OverlayWindowManager()
     let notchCaptureWindowManager = OpenClickyNotchCaptureWindowManager()
@@ -3346,6 +3504,7 @@ final class CompanionManager: ObservableObject {
         transientHideTask = nil
         voiceFollowUpStopTask?.cancel()
         voiceFollowUpStopTask = nil
+        wakeWordAudioDucker.duck(reason: "wake_word_detected")
         resetSpeculativeFireForNewUtterance()
         startPrewarmedScreenshotCaptureIfPossible()
         showCursorOverlayIfAvailable()
@@ -3383,6 +3542,7 @@ final class CompanionManager: ObservableObject {
                 currentDraftText: "",
                 updateDraftText: { _ in },
                 submitDraftText: { [weak self] finalTranscript in
+                    self?.wakeWordAudioDucker.restore(reason: "wake_word_dictation_completed")
                     self?.handleFinalVoiceTranscript(finalTranscript)
                 }
             )
@@ -3393,6 +3553,7 @@ final class CompanionManager: ObservableObject {
                 guard let self else { return }
                 self.voiceFollowUpStopTask = nil
                 self.buddyDictationManager.stopPersistentDictationFromMicrophoneButton()
+                self.wakeWordAudioDucker.restore(reason: "wake_word_dictation_timeout")
             }
         }
     }
@@ -3405,7 +3566,10 @@ final class CompanionManager: ObservableObject {
     }
 
     private func startBidirectionalRealtimeVoiceCapture(source: String) {
-        guard !isRealtimeBidirectionalVoiceCaptureActive else { return }
+        guard !isRealtimeBidirectionalVoiceCaptureActive else {
+            wakeWordAudioDucker.restore(reason: "realtime_start_already_active")
+            return
+        }
         let audioPlaybackActive = voiceTTSClient.isPlaying || openAIRealtimeSpeechClient.isPlaying || deepgramVoiceAgentClient.isPlaying
         if voiceState == .responding, !audioPlaybackActive {
             OpenClickyMessageLogStore.shared.append(
@@ -3567,6 +3731,7 @@ final class CompanionManager: ObservableObject {
             openAIRealtimeSpeechClient.cancelBidirectionalVoiceTurn()
             deepgramVoiceAgentClient.cancelBidirectionalVoiceTurn()
             currentAudioPowerLevel = 0
+            wakeWordAudioDucker.restore(reason: "realtime_cancelled_before_ready")
             voiceState = .idle
             OpenClickyMessageLogStore.shared.append(
                 lane: "voice",
@@ -3585,6 +3750,7 @@ final class CompanionManager: ObservableObject {
         isRealtimeBidirectionalVoiceCaptureActive = false
         isRealtimeBidirectionalVoiceInputReady = false
         voiceState = .processing
+        wakeWordAudioDucker.restore(reason: "realtime_capture_finished")
 
         let finishedAt = Date()
         let captureStartedAt = realtimeBidirectionalVoiceCaptureStartedAt
@@ -3594,6 +3760,23 @@ final class CompanionManager: ObservableObject {
                 guard let self else { return }
                 let routeBeforeAssistant: @MainActor @Sendable (String) -> Bool = { [weak self] transcript in
                     guard let self else { return false }
+                    return self.routeCompletedRealtimeVoiceTranscriptIfNeeded(transcript)
+                }
+                let routeRealtimeToolCall: @MainActor @Sendable (String, String) -> Bool = { [weak self] toolName, transcript in
+                    guard let self else { return false }
+                    OpenClickyMessageLogStore.shared.append(
+                        lane: "voice",
+                        direction: "internal",
+                        event: "voice.realtime_bidirectional.tool_route_requested",
+                        fields: [
+                            "toolName": toolName,
+                            "transcript": transcript,
+                            "speechModel": self.selectedModel,
+                            "computerUseBackend": self.selectedComputerUseBackend.rawValue,
+                            "computerUseModel": self.selectedComputerUseModel,
+                            "backgroundAgentModel": self.codexAgentSession.model
+                        ]
+                    )
                     return self.routeCompletedRealtimeVoiceTranscriptIfNeeded(transcript)
                 }
                 let selectedVoiceResponseModel = OpenClickyModelCatalog.voiceResponseModel(withID: self.selectedModel)
@@ -3610,7 +3793,8 @@ final class CompanionManager: ObservableObject {
                     )
                 } else {
                     let openAIResult = try await self.openAIRealtimeSpeechClient.finishBidirectionalVoiceTurn(
-                        routeUserTranscriptBeforeAssistantResponse: routeBeforeAssistant
+                        routeUserTranscriptBeforeAssistantResponse: routeBeforeAssistant,
+                        routeRealtimeToolCallBeforeAssistantResponse: routeRealtimeToolCall
                     )
                     result = BidirectionalRealtimeVoiceResult(
                         userTranscript: openAIResult.userTranscript,
@@ -3740,6 +3924,7 @@ final class CompanionManager: ObservableObject {
         realtimeBidirectionalVoiceCaptureStartedAt = nil
         clearVoiceResponseCaption()
         currentAudioPowerLevel = 0
+        wakeWordAudioDucker.restore(reason: "realtime_released_\(reason)")
         voiceState = .idle
         OpenClickyMessageLogStore.shared.append(
             lane: "voice",
@@ -3776,6 +3961,10 @@ final class CompanionManager: ObservableObject {
             fields: [
                 "text": trimmedTranscript,
                 "inputPath": activeRealtimeInputPath,
+                "voiceInferenceModel": selectedModel,
+                "computerUseBackend": selectedComputerUseBackend.rawValue,
+                "computerUseModel": selectedComputerUseModel,
+                "backgroundAgentModel": codexAgentSession.model,
                 "requestID": requestTiming.requestID
             ]
         )
@@ -3941,6 +4130,9 @@ final class CompanionManager: ObservableObject {
             return true
         }
         if submitContextualAgentFollowUp(transcript, source: source) {
+            return true
+        }
+        if startSmartAgentTaskIfNeeded(from: transcript) {
             return true
         }
         if startImplicitAgentTaskIfNeeded(from: transcript) {
@@ -4148,6 +4340,33 @@ final class CompanionManager: ObservableObject {
         startVoiceAgentTask(
             instruction: instruction,
             acknowledgement: "i’ll take care of that in the background.",
+            voiceContextUserTranscript: finalTranscript
+        )
+        return true
+    }
+
+    private func startSmartAgentTaskIfNeeded(from finalTranscript: String) -> Bool {
+        guard let decision = Self.smartAgentRouteDecision(from: finalTranscript) else {
+            return false
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "agent",
+            direction: "incoming",
+            event: "openclicky.agent_task.smart_route",
+            fields: [
+                "transcript": finalTranscript,
+                "instruction": decision.instruction,
+                "reason": decision.reason,
+                "confidence": decision.confidence,
+                "executor": "agent_mode",
+                "route": "agent.start",
+                "requestID": activeRequestTiming?.requestID ?? "none"
+            ]
+        )
+        startVoiceAgentTask(
+            instruction: decision.instruction,
+            acknowledgement: decision.acknowledgement,
             voiceContextUserTranscript: finalTranscript
         )
         return true
@@ -8150,6 +8369,17 @@ final class CompanionManager: ObservableObject {
             "research",
             "summarize",
             "summary",
+            "voice",
+            "realtime",
+            "computer use",
+            "tool",
+            "tools",
+            "tooling",
+            "model",
+            "models",
+            "routing",
+            "background",
+            "agent mode",
             "slider",
             "find",
             "search"
@@ -8869,6 +9099,13 @@ final class CompanionManager: ObservableObject {
         return "\(kind):\(normalizedValue)"
     }
 
+    private struct SmartAgentRouteDecision {
+        let instruction: String
+        let acknowledgement: String
+        let reason: String
+        let confidence: Double
+    }
+
     private static func shouldDeferLiveComputerUseForAgentRoute(_ transcript: String) -> Bool {
         isAgentRoutingCandidate(transcript)
     }
@@ -8911,6 +9148,87 @@ final class CompanionManager: ObservableObject {
         guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
 
         return cleanedAgentTaskInstruction(candidate)
+    }
+
+    private static func smartAgentRouteDecision(from transcript: String) -> SmartAgentRouteDecision? {
+        let candidate = normalizedAgentTaskInstruction(from: transcript)
+        let normalized = normalizedSpokenCommandText(candidate)
+        guard wordCount(in: normalized) >= 3 else { return nil }
+        guard !isRawTransportDiagnosticEvent(candidate) else { return nil }
+        guard !isMetaAgentRoutingQuestion(candidate) else { return nil }
+        guard !isVoiceRouteCapabilityQuestion(candidate) else { return nil }
+        guard !isGenericWebSearchCapabilityQuestion(candidate) else { return nil }
+        guard !isSensitiveOrDestructiveAgentTaskRequest(normalized) else { return nil }
+        guard !isLikelyDirectLocalOnlyRequest(candidate) else { return nil }
+
+        if let filesystemInstruction = implicitFilesystemTaskInstruction(from: candidate) {
+            return SmartAgentRouteDecision(
+                instruction: filesystemInstruction,
+                acknowledgement: filesystemTaskAcknowledgement(from: candidate),
+                reason: "local_filesystem_task",
+                confidence: 0.94
+            )
+        }
+
+        guard let instruction = naturalBackgroundTaskInstruction(from: candidate) else {
+            return nil
+        }
+
+        return SmartAgentRouteDecision(
+            instruction: instruction,
+            acknowledgement: "i’ll take care of that in the background.",
+            reason: "natural_background_task",
+            confidence: 0.86
+        )
+    }
+
+    private static func naturalBackgroundTaskInstruction(from transcript: String) -> String? {
+        let candidate = cleanedNaturalBackgroundInstruction(from: transcript)
+        let normalized = normalizedSpokenCommandText(candidate)
+        guard wordCount(in: normalized) >= 3 else { return nil }
+        guard containsNaturalBackgroundWorkCue(normalized) else { return nil }
+
+        let hasWorkTarget = containsDurableWorkTarget(normalized)
+            || containsReferentialWorkTarget(normalized)
+            || isLikelyAgentToolWorkInstruction(candidate)
+            || hasAgentWorkVerbAndArtifact(candidate)
+            || containsFreshResearchRequest(normalized)
+        guard hasWorkTarget else { return nil }
+        guard !isAgentTaskPlaceholderInstruction(candidate) else { return nil }
+
+        return candidate
+    }
+
+    private static func cleanedNaturalBackgroundInstruction(from transcript: String) -> String {
+        var instruction = cleanedAgentTaskInstruction(normalizedAgentTaskInstruction(from: transcript))
+        let removablePrefixes = [
+            #"(?i)^\s*(?:can|could|would|will)\s+we\s+"#,
+            #"(?i)^\s*(?:i\s+)?(?:want|need)\s+(?:you\s+)?to\s+"#,
+            #"(?i)^\s*let'?s\s+"#
+        ]
+        for pattern in removablePrefixes {
+            instruction = instruction.replacingOccurrences(
+                of: pattern,
+                with: "",
+                options: .regularExpression
+            )
+        }
+        return cleanedAgentTaskInstruction(instruction)
+    }
+
+    private static func containsNaturalBackgroundWorkCue(_ normalized: String) -> Bool {
+        let cuePattern = #"\b(?:make\s+sure|ensure|verify|validate|confirm|look\s+into|figure\s+out|sort\s+out|deal\s+with|take\s+care\s+of|get\s+(?:this|that|it|.+?)\s+working|wire\s+(?:up|in)|hook\s+(?:up|in)|set\s+up|finish|polish|improve|repair|diagnose|investigate)\b"#
+        if normalized.range(of: cuePattern, options: .regularExpression) != nil {
+            return true
+        }
+
+        let makeUsePattern = #"\b(?:make|have)\b.{1,80}\b(?:use|using|route|routing|send|sending|call|calling)\b"#
+        return normalized.range(of: makeUsePattern, options: .regularExpression) != nil
+    }
+
+    private static func containsReferentialWorkTarget(_ normalized: String) -> Bool {
+        let referencePattern = #"\b(?:this|that|it|here|current\s+(?:file|screen|window|page|repo|repository|project|app)|visible\s+(?:file|code|screen|window|page)|selected\s+(?:text|file|code|region)|the\s+(?:current|visible|selected)\s+(?:thing|part|file|code|screen|window|page)|what\s+we\s+(?:just\s+)?(?:talked|discussed)\s+about|the\s+thing\s+from\s+before)\b"#
+        return normalized.range(of: referencePattern, options: .regularExpression) != nil
     }
 
 
@@ -9082,7 +9400,9 @@ final class CompanionManager: ObservableObject {
         }
 
         let explicitExecutionPattern = #"\b(?:agent|start\s+(?:an?\s+)?agent|spin\s+up|get\s+(?:an?\s+)?agent|implement|patch|change\s+the\s+code|edit\s+the\s+file|write\s+the\s+file|make\s+the\s+change|do\s+the\s+change|fix\s+it\s+now)\b"#
+        let naturalWorkPattern = #"\b(?:make\s+sure|ensure|verify|validate|look\s+into|sort\s+out|deal\s+with|take\s+care\s+of|get\s+(?:this|that|it|.+?)\s+working|wire\s+(?:up|in)|hook\s+(?:up|in)|diagnose|investigate)\b"#
         return normalized.range(of: explicitExecutionPattern, options: .regularExpression) == nil
+            && normalized.range(of: naturalWorkPattern, options: .regularExpression) == nil
     }
 
     private static func isLikelyPureConversation(_ transcript: String) -> Bool {
@@ -9121,12 +9441,12 @@ final class CompanionManager: ObservableObject {
     }
 
     private static func containsAgentWorkAction(_ normalized: String) -> Bool {
-        let actionPattern = #"\b(?:check|look\s+at|take\s+a\s+look|inspect|review|audit|fix|modify|change|update|edit|build|create|make|write|draft|research|search|find|summari[sz]e|organize|clean\s+up|cleanup|test|run|install|compare|read|move|rename|delete|prune|optimi[sz]e|wire|implement|add|remove|route|delegate)\b"#
+        let actionPattern = #"\b(?:check|look\s+at|take\s+a\s+look|inspect|review|audit|fix|modify|change|update|edit|build|create|make|write|draft|research|search|find|summari[sz]e|organize|clean\s+up|cleanup|test|run|install|compare|read|move|rename|delete|prune|optimi[sz]e|wire|implement|add|remove|route|delegate|ensure|verify|validate|confirm|diagnose|investigate|repair|polish|improve|finish|sort\s+out|deal\s+with|take\s+care\s+of|make\s+sure|look\s+into|figure\s+out)\b"#
         return normalized.range(of: actionPattern, options: .regularExpression) != nil
     }
 
     private static func containsDurableWorkTarget(_ normalized: String) -> Bool {
-        let targetPattern = #"\b(?:openclicky|clicky|github|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|pr|issue|issues|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides)\b"#
+        let targetPattern = #"\b(?:openclicky|clicky|github|repo|repository|codebase|project|app|settings|preference|preferences|log|logs|memory|skill|skills|desktop|download|downloads|document|documents|folder|folders|file|files|code|diff|git|branch|pull\s+request|pr|issue|issues|bug|test|tests|build|swift|xcode|email|gmail|calendar|spreadsheet|sheet|doc|slides|voice|realtime|computer\s+use|tool|tools|tooling|model|models|routing|route|background|agent\s+mode)\b"#
         return normalized.range(of: targetPattern, options: .regularExpression) != nil
     }
 
@@ -9226,8 +9546,8 @@ final class CompanionManager: ObservableObject {
 
     private static func hasAgentWorkVerbAndArtifact(_ transcript: String) -> Bool {
         let normalized = normalizedSpokenCommandText(transcript)
-        let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run|stop)\b"#
-        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|github|issue|issues|pull\s+request|pr|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls|ui|volume|slider|control)\b"#
+        let workVerbPattern = #"\b(?:create|make|build|update|change|edit|fix|design|redesign|open|show|preview|pull\s+up|find|save|export|write|review|test|run|stop|ensure|verify|validate|diagnose|investigate|repair|polish|improve|finish|wire|route)\b"#
+        let artifactPattern = #"\b(?:form|page|site|website|app|file|document|report|code|repo|repository|github|issue|issues|pull\s+request|pr|folder|version|style|design|panel|overlay|status|progress|comments|thinking|calls|ui|volume|slider|control|voice|realtime|computer\s+use|tool|tools|tooling|model|models|routing|route|background|agent\s+mode)\b"#
         return normalized.range(of: workVerbPattern, options: .regularExpression) != nil
             && normalized.range(of: artifactPattern, options: .regularExpression) != nil
     }
@@ -12019,6 +12339,8 @@ final class CompanionManager: ObservableObject {
         return """
         \(Self.companionRealtimeVoiceSystemPrompt)
 
+        \(currentRealtimeRoutingContextPrompt())
+
         \(currentAppSkillContextPrompt())
 
         \(runtimeStorageContextForVoicePrompt())
@@ -12027,6 +12349,21 @@ final class CompanionManager: ObservableObject {
         read this as durable user/project context. do not say you cannot remember outside the conversation; use this memory.
 
         \(memoryContext)
+        """
+    }
+
+    private func currentRealtimeRoutingContextPrompt() -> String {
+        let voiceModel = OpenClickyModelCatalog.voiceResponseModel(withID: selectedModel)
+        let computerUseModel = OpenClickyModelCatalog.computerUseModel(withID: selectedComputerUseModel)
+        let backend = selectedComputerUseBackend
+        return """
+        OpenClicky realtime routing:
+        - voice inference model: \(voiceModel.id) (\(voiceModel.label))
+        - realtime audio input path: \(activeRealtimeInputPath)
+        - selected computer-use backend: \(backend.rawValue) (\(backend.label))
+        - selected computer-use model: \(computerUseModel.id) (\(computerUseModel.provider.rawValue), \(computerUseModel.label))
+        - background Agent Mode model: \(codexAgentSession.model)
+        - keep spoken voice inference on the realtime model. for direct computer-control requests, call OpenClicky's computer-use tool so the app can execute through the selected backend. for deeper file, code, research, settings, logs, or multi-step work, call the background-agent tool so Agent Mode can run on the full configured model.
         """
     }
 
