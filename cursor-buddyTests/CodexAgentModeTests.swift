@@ -131,6 +131,13 @@ struct CodexAgentModeTests {
         #expect(CodexAgentSession.shouldRetryWithCompatibilityFallback(message))
     }
 
+    @Test func codexToolRouterClosedStdinDiagnosticIsNonFatal() throws {
+        let diagnostic = "ERROR codex_core::tools::router: write_stdin failed: stdin is closed"
+
+        #expect(CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine(diagnostic))
+        #expect(!CodexAgentSession.testIsNonFatalCodexRuntimeStderrLine("ERROR codex_core::main: process exited with error status 1"))
+    }
+
     @Test func logReviewSetupCreatesMarkdownAndJSONLFiles() throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory())
             .appendingPathComponent(UUID().uuidString, isDirectory: true)

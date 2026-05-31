@@ -1322,7 +1322,11 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
     }
 
-    private static func isNonFatalCodexRuntimeStderrLine(_ line: String) -> Bool {
+    nonisolated static func testIsNonFatalCodexRuntimeStderrLine(_ line: String) -> Bool {
+        isNonFatalCodexRuntimeStderrLine(line)
+    }
+
+    nonisolated private static func isNonFatalCodexRuntimeStderrLine(_ line: String) -> Bool {
         let normalized = line
             .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
             .lowercased()
@@ -1350,6 +1354,20 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         }
 
         if normalized.contains("apply_patch verification failed") {
+            return true
+        }
+
+        // Codex can emit tool-router diagnostics on stderr while the
+        // turn is still alive. In the logs this showed up as
+        // `write_stdin failed: stdin is closed...` after an already-ended
+        // terminal session, then OpenClicky marked the whole background
+        // agent failed even though Codex continued reasoning and sending
+        // messages. Treat that as a non-fatal tool interaction warning;
+        // real agent failure should come from a Codex `error`, process
+        // exit, or terminal command result.
+        if normalized.contains("codex_core::tools::router")
+            && normalized.contains("write_stdin failed")
+            && normalized.contains("stdin is closed") {
             return true
         }
 

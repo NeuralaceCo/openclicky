@@ -1063,12 +1063,10 @@ final class FillerPhraseLibrary {
     /// would add exactly the latency the filler is meant to hide.
     static let defaultPhrases: [String] = [
         "one moment.",
-        "sure, give me a second.",
-        "let me check that.",
-        "sure, I'll take a look.",
-        "yeah, that makes sense.",
-        "let me think that through.",
-        "I'll look into that for you."
+        "give me a second.",
+        "checking now.",
+        "let me check.",
+        "working on that."
     ]
 
     private var samplesByPhrase: [String: [Int16]] = [:]
@@ -1153,9 +1151,9 @@ final class FillerPhraseLibrary {
         let preferred: [String]
         if screenContextNeeded || normalized.contains("look at") || normalized.contains("take a look") {
             preferred = [
-                "sure, I'll take a look.",
-                "let me check that.",
-                "sure, give me a second."
+                "checking now.",
+                "let me check.",
+                "give me a second."
             ]
         } else if normalized.contains("do we")
                     || normalized.contains("should we")
@@ -1164,9 +1162,9 @@ final class FillerPhraseLibrary {
                     || normalized.contains("what i'm interested")
                     || normalized.contains("what i’m interested") {
             preferred = [
-                "yeah, that makes sense.",
-                "let me think that through.",
-                "sure, give me a second."
+                "give me a second.",
+                "working on that.",
+                "let me check."
             ]
         } else if normalized.contains("check")
                     || normalized.contains("find")
@@ -1174,13 +1172,13 @@ final class FillerPhraseLibrary {
                     || normalized.contains("research")
                     || normalized.contains("look into") {
             preferred = [
-                "let me check that.",
-                "I'll look into that for you.",
-                "sure, give me a second."
+                "checking now.",
+                "let me check.",
+                "give me a second."
             ]
         } else {
             preferred = [
-                "sure, give me a second.",
+                "give me a second.",
                 "one moment."
             ]
         }

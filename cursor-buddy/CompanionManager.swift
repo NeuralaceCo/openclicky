@@ -12330,6 +12330,7 @@ final class CompanionManager: ObservableObject {
         value = value.replacingOccurrences(of: #"(?i)\b(?:/Users|/Volumes|~)/[^\s,;:()\[\]{}<>"]+"#, with: " ", options: .regularExpression)
         value = value.replacingOccurrences(of: #"(?i)\b\S+\.(swift|md|json|jsonl|toml|yaml|yml|txt|csv|ts|tsx|js|jsx|py|sh)\b"#, with: " ", options: .regularExpression)
         value = value.replacingOccurrences(of: #"`[^`]*`"#, with: " ", options: .regularExpression)
+        value = Self.naturallyBoundedCompletionSpeech(value, maxLength: maxLength)
         value = value.replacingOccurrences(of: #"[#*_>\[\]\(\)\{\}:;|\\/]+"#, with: " ", options: .regularExpression)
         value = value.replacingOccurrences(of: #"[-–—]+"#, with: " ", options: .regularExpression)
         value = value.replacingOccurrences(of: #"[.!?,]+"#, with: " ", options: .regularExpression)
@@ -12345,6 +12346,43 @@ final class CompanionManager: ObservableObject {
             return String(prefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines)
         }
         return prefix.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Keeps spoken task-completion summaries from sounding like the
+    /// audio was cut off. Prefer a real sentence boundary; when the
+    /// only available text is long, end with a deliberate handoff to
+    /// the on-screen task transcript instead of stopping mid-thought.
+    private static func naturallyBoundedCompletionSpeech(_ text: String, maxLength: Int) -> String {
+        let flattened = text
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flattened.count > maxLength else { return flattened }
+
+        let limitIndex = flattened.index(flattened.startIndex, offsetBy: maxLength)
+        let prefix = String(flattened[..<limitIndex])
+        let minimumBoundary = flattened.index(
+            flattened.startIndex,
+            offsetBy: min(70, max(0, flattened.count - 1))
+        )
+        if let sentenceBreak = prefix.lastIndex(where: { ".!?".contains($0) }),
+           sentenceBreak >= minimumBoundary {
+            return String(prefix[...sentenceBreak]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+
+        let suffix = " Details are in the task."
+        let allowedPrefixLength = max(40, maxLength - suffix.count)
+        let allowedIndex = prefix.index(prefix.startIndex, offsetBy: min(prefix.count, allowedPrefixLength))
+        let boundedPrefix = String(prefix[..<allowedIndex])
+        if let lastComma = boundedPrefix.lastIndex(where: { ",;".contains($0) }),
+           lastComma > boundedPrefix.startIndex {
+            return String(boundedPrefix[..<lastComma]).trimmingCharacters(in: .whitespacesAndNewlines) + suffix
+        }
+        if let lastSpace = boundedPrefix.lastIndex(of: " "), lastSpace > boundedPrefix.startIndex {
+            return String(boundedPrefix[..<lastSpace]).trimmingCharacters(in: .whitespacesAndNewlines) + suffix
+        }
+        return boundedPrefix.trimmingCharacters(in: .whitespacesAndNewlines) + suffix
     }
 
     /// Agent final replies often include useful transcript detail like
