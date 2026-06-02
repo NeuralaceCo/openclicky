@@ -867,7 +867,6 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
         case "turn/started":
             status = .running
             progressStage = .starting
-            appendActivityStatusLine("Starting the agent loop")
         case "item/agentMessage/delta":
             let itemID = CodexJSON.string(params["itemId"]) ?? UUID().uuidString
             let delta = CodexJSON.string(params["delta"]) ?? ""
@@ -910,7 +909,6 @@ final class CodexAgentSession: ObservableObject, Identifiable, BrowserWorkspaceA
             currentAssistantEntryID = nil
             status = .ready
             progressStage = .completed
-            appendActivityStatusLine("Finished the agent loop")
             persistCompletedTurnMemoryIfNeeded()
             Task { await OpenClickyAgentFileLeaseCoordinator.shared.releaseLeases(for: id) }
             currentLeasePaths = []

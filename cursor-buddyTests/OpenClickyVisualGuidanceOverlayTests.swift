@@ -176,6 +176,10 @@ struct OpenClickyVisualGuidanceOverlayTests {
 
         #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("calibration anchor"))
         #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("window anchor"))
+        #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("Finder icon calibration anchor"))
+        #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("Trash calibration anchor"))
+        #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("Apple menu calibration anchor"))
+        #expect(CompanionManager.testIsVisualGuidanceCalibrationCaption("time calibration anchor"))
         #expect(!CompanionManager.testIsVisualGuidanceCalibrationCaption("normal highlight"))
 
         let firstOffset = CompanionManager.testUpdateVisualGuidanceCalibrationOffset(

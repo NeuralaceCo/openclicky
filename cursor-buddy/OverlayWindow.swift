@@ -143,12 +143,9 @@ class OverlayWindow: NSWindow {
             defer: false
         )
 
-        // Make window transparent and click-through by default. Click-through
-        // is driven at the window level by `ignoresMouseEvents`; the manager
-        // flips it to `false` ONLY while the cursor is over a tiny editing
-        // handle (see OverlayWindowManager.updateOverlayInteractivity). A
-        // content-view `hitTest` returning nil does NOT pass clicks to the app
-        // behind, so the window itself must ignore events to stay transparent.
+        // Make window transparent and click-through. A content-view `hitTest`
+        // returning nil does NOT pass clicks to the app behind, so the window
+        // itself must ignore events to stay transparent.
         self.isOpaque = false
         self.backgroundColor = .clear
         self.level = .screenSaver  // Always on top, above submenus and popups
@@ -176,23 +173,6 @@ class OverlayWindow: NSWindow {
 
     override var canBecomeMain: Bool {
         return false
-    }
-}
-
-private final class OpenClickyOverlayHostingView<Content: View>: NSHostingView<Content> {
-    var interactiveScreenRectsProvider: () -> [CGRect] = { [] }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        guard let window else { return nil }
-        let screenPoint = CGPoint(
-            x: window.frame.minX + point.x,
-            y: window.frame.minY + point.y
-        )
-        let canHandleEvent = interactiveScreenRectsProvider().contains { rect in
-            rect.insetBy(dx: -5, dy: -5).contains(screenPoint)
-        }
-        guard canHandleEvent else { return nil }
-        return super.hitTest(point)
     }
 }
 
@@ -332,6 +312,37 @@ private struct ClickyTriangleShape: Shape {
         path.addLine(to: bottomRight)
         path.closeSubpath()
         return path
+    }
+}
+
+private struct OpenClickyCalibrationCursorBoxView: View {
+    let color: Color
+    let reduceMotion: Bool
+    @State private var pulse = false
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6, style: .continuous)
+            .stroke(
+                color,
+                style: StrokeStyle(lineWidth: 2.8, lineCap: .round, lineJoin: .round)
+            )
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(color.opacity(0.08))
+            )
+            .shadow(color: color.opacity(reduceMotion ? 0.32 : 0.76), radius: reduceMotion ? 4 : 10)
+            .overlay(
+                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    .stroke(color.opacity(0.32), lineWidth: 7)
+                    .blur(radius: 1.5)
+            )
+            .scaleEffect(reduceMotion ? 1 : (pulse ? 1.04 : 0.98))
+            .onAppear {
+                guard !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.82).repeatForever(autoreverses: true)) {
+                    pulse = true
+                }
+            }
     }
 }
 
@@ -531,7 +542,6 @@ struct BlueCursorView: View {
     @State private var navigationBubbleText: String = ""
     @State private var navigationBubbleOpacity: Double = 0.0
     @State private var navigationBubbleSize: CGSize = .zero
-    @State private var activeVisualGuidanceRectangleDrag: OpenClickyVisualGuidanceRectangleDrag?
 
     /// The cursor position at the moment navigation started, used to detect
     /// if the user moves the cursor enough to cancel the navigation.
@@ -587,6 +597,18 @@ struct BlueCursorView: View {
             return true
         case .pet:
             return false
+        }
+    }
+
+    private var isCalibrationCursorBoxActive: Bool {
+        visualGuidanceOverlaysOnThisScreen.contains { overlay in
+            guard let caption = overlay.style.caption else { return false }
+            let normalized = caption
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+                .lowercased()
+            return normalized.contains("calibration")
+                || normalized.contains("calibrate")
+                || normalized.contains("anchor")
         }
     }
 
@@ -772,18 +794,27 @@ struct BlueCursorView: View {
             // Rotation is applied conditionally: triangle styles point in their
             // direction of travel via rotation; pet sprites face up and use
             // their own running-left/running-right rows for direction instead.
-            ClickyCursorAvatarView(
-                accentColor: overlayCursorColor,
-                animationState: petAnimationState
-            )
+            ZStack {
+                if isCalibrationCursorBoxActive {
+                    OpenClickyCalibrationCursorBoxView(
+                        color: overlayCursorColor,
+                        reduceMotion: accessibilityReduceMotion
+                    )
+                } else {
+                    ClickyCursorAvatarView(
+                        accentColor: overlayCursorColor,
+                        animationState: petAnimationState
+                    )
+                }
+            }
                 .frame(
-                    width: (avatarHonorsRotation ? 25 : 48) * normalizedCursorAvatarSizeScale,
-                    height: (avatarHonorsRotation ? 33 : 52) * normalizedCursorAvatarSizeScale
+                    width: (isCalibrationCursorBoxActive ? 38 : (avatarHonorsRotation ? 25 : 48)) * normalizedCursorAvatarSizeScale,
+                    height: (isCalibrationCursorBoxActive ? 38 : (avatarHonorsRotation ? 33 : 52)) * normalizedCursorAvatarSizeScale
                 )
-                .rotationEffect(.degrees(avatarHonorsRotation ? buddyRotationDegrees : 0))
+                .rotationEffect(.degrees(!isCalibrationCursorBoxActive && avatarHonorsRotation ? buddyRotationDegrees : 0))
                 .shadow(
-                    color: shouldShowCursorGlow ? overlayCursorColor.opacity(0.86) : .clear,
-                    radius: shouldShowCursorGlow ? 8 + (buddyFlightScale - 1.0) * 20 : 0,
+                    color: (!isCalibrationCursorBoxActive && shouldShowCursorGlow) ? overlayCursorColor.opacity(0.86) : .clear,
+                    radius: (!isCalibrationCursorBoxActive && shouldShowCursorGlow) ? 8 + (buddyFlightScale - 1.0) * 20 : 0,
                     x: 0,
                     y: 0
                 )
@@ -968,7 +999,7 @@ struct BlueCursorView: View {
         }
         .transition(accessibilityReduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.98)))
         .animation(accessibilityReduceMotion ? nil : .easeOut(duration: 0.18), value: overlay.id)
-        .allowsHitTesting(overlay.kind == .rectangle)
+        .allowsHitTesting(false)
     }
 
     @ViewBuilder
@@ -987,152 +1018,17 @@ struct BlueCursorView: View {
     private func visualGuidanceRectangle(_ overlay: OpenClickyVisualGuidanceOverlay, color: Color) -> some View {
         if let rect = overlay.rect?.normalized.cgRect {
             let localRect = convertScreenRectToSwiftUICoordinates(rect)
-            ZStack {
-                OpenClickyVisualGuidanceRectangleView(
-                    color: color,
-                    lineWidth: CGFloat(overlay.style.lineWidth),
-                    fillOpacity: overlay.style.fillOpacity,
-                    drawingDuration: min(0.95, max(0.38, overlay.duration * 0.22)),
-                    reduceMotion: accessibilityReduceMotion
-                )
-                .frame(width: localRect.width, height: localRect.height)
-                .position(x: localRect.midX, y: localRect.midY)
-                .allowsHitTesting(false)
-
-                ForEach(OpenClickyVisualGuidanceRectangleCorner.allCases, id: \.self) { corner in
-                    visualGuidanceRectangleHandle(
-                        overlay: overlay,
-                        screenRect: rect,
-                        localRect: localRect,
-                        corner: corner,
-                        color: color
-                    )
-                }
-            }
-            .onAppear {
-                registerVisualGuidanceHandleFrames(for: overlay, screenRect: rect)
-            }
-            .onChange(of: rect) { _, newRect in
-                registerVisualGuidanceHandleFrames(for: overlay, screenRect: newRect)
-            }
-            .onDisappear {
-                if activeVisualGuidanceRectangleDrag?.overlayID == overlay.id {
-                    activeVisualGuidanceRectangleDrag = nil
-                    companionManager.setVisualGuidanceDragActive(nil)
-                }
-                companionManager.setVisualGuidanceInteractionFrames([], for: overlay.id)
-            }
-        }
-    }
-
-    private func visualGuidanceRectangleHandle(
-        overlay: OpenClickyVisualGuidanceOverlay,
-        screenRect: CGRect,
-        localRect: CGRect,
-        corner: OpenClickyVisualGuidanceRectangleCorner,
-        color: Color
-    ) -> some View {
-        Circle()
-            .fill(Color.white.opacity(0.74))
-            .overlay(Circle().stroke(color.opacity(0.78), lineWidth: 1.2))
-            .shadow(color: Color.black.opacity(0.18), radius: 3, x: 0, y: 1)
-            .frame(width: 12, height: 12)
-            .contentShape(Circle().inset(by: -14))
-            .position(corner.localPoint(in: localRect))
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        let existingDrag = activeVisualGuidanceRectangleDrag
-                        let drag = existingDrag?.overlayID == overlay.id ? existingDrag! : OpenClickyVisualGuidanceRectangleDrag(
-                            overlayID: overlay.id,
-                            corner: corner,
-                            startRect: screenRect
-                        )
-                        activeVisualGuidanceRectangleDrag = drag
-                        companionManager.setVisualGuidanceDragActive(overlay.id)
-                        let adjusted = adjustedVisualGuidanceRectangle(
-                            from: drag.startRect,
-                            corner: drag.corner,
-                            translation: value.translation
-                        )
-                        companionManager.updateVisualGuidanceRectangle(
-                            id: overlay.id,
-                            to: adjusted,
-                            commitsCorrection: false
-                        )
-                    }
-                    .onEnded { value in
-                        let existingDrag = activeVisualGuidanceRectangleDrag
-                        let drag = existingDrag?.overlayID == overlay.id ? existingDrag! : OpenClickyVisualGuidanceRectangleDrag(
-                            overlayID: overlay.id,
-                            corner: corner,
-                            startRect: screenRect
-                        )
-                        activeVisualGuidanceRectangleDrag = nil
-                        let adjusted = adjustedVisualGuidanceRectangle(
-                            from: drag.startRect,
-                            corner: drag.corner,
-                            translation: value.translation
-                        )
-                        companionManager.updateVisualGuidanceRectangle(
-                            id: overlay.id,
-                            to: adjusted,
-                            commitsCorrection: true,
-                            correctionStartRect: drag.startRect
-                        )
-                        companionManager.setVisualGuidanceDragActive(nil)
-                    }
+            OpenClickyVisualGuidanceRectangleView(
+                color: color,
+                lineWidth: CGFloat(overlay.style.lineWidth),
+                fillOpacity: overlay.style.fillOpacity,
+                drawingDuration: min(0.95, max(0.38, overlay.duration * 0.22)),
+                reduceMotion: accessibilityReduceMotion
             )
-            .accessibilityLabel("Adjust OpenClicky rectangle")
-    }
-
-    private func registerVisualGuidanceHandleFrames(for overlay: OpenClickyVisualGuidanceOverlay, screenRect: CGRect) {
-        let handleSize: CGFloat = 30
-        let corners = OpenClickyVisualGuidanceRectangleCorner.allCases.map { corner in
-            CGRect(
-                x: corner.screenPoint(in: screenRect).x - handleSize / 2,
-                y: corner.screenPoint(in: screenRect).y - handleSize / 2,
-                width: handleSize,
-                height: handleSize
-            )
+            .frame(width: localRect.width, height: localRect.height)
+            .position(x: localRect.midX, y: localRect.midY)
+            .allowsHitTesting(false)
         }
-        companionManager.setVisualGuidanceInteractionFrames(corners, for: overlay.id)
-    }
-
-    private func adjustedVisualGuidanceRectangle(
-        from startRect: CGRect,
-        corner: OpenClickyVisualGuidanceRectangleCorner,
-        translation: CGSize
-    ) -> CGRect {
-        let minimumSide: CGFloat = 16
-        let screenDeltaX = translation.width
-        let screenDeltaY = -translation.height
-        var minX = startRect.minX
-        var maxX = startRect.maxX
-        var minY = startRect.minY
-        var maxY = startRect.maxY
-
-        switch corner {
-        case .topLeft:
-            minX += screenDeltaX
-            maxY += screenDeltaY
-        case .topRight:
-            maxX += screenDeltaX
-            maxY += screenDeltaY
-        case .bottomLeft:
-            minX += screenDeltaX
-            minY += screenDeltaY
-        case .bottomRight:
-            maxX += screenDeltaX
-            minY += screenDeltaY
-        }
-
-        minX = max(screenFrame.minX, min(minX, maxX - minimumSide))
-        maxX = min(screenFrame.maxX, max(maxX, minX + minimumSide))
-        minY = max(screenFrame.minY, min(minY, maxY - minimumSide))
-        maxY = min(screenFrame.maxY, max(maxY, minY + minimumSide))
-
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
     }
 
     private func captionAnchor(for overlay: OpenClickyVisualGuidanceOverlay) -> CGPoint {
@@ -1658,47 +1554,6 @@ struct BlueCursorView: View {
             currentIndex += 1
         }
     }
-}
-
-// MARK: - Visual Guidance Drawing
-
-private enum OpenClickyVisualGuidanceRectangleCorner: CaseIterable, Hashable {
-    case topLeft
-    case topRight
-    case bottomLeft
-    case bottomRight
-
-    func localPoint(in rect: CGRect) -> CGPoint {
-        switch self {
-        case .topLeft:
-            return CGPoint(x: rect.minX, y: rect.minY)
-        case .topRight:
-            return CGPoint(x: rect.maxX, y: rect.minY)
-        case .bottomLeft:
-            return CGPoint(x: rect.minX, y: rect.maxY)
-        case .bottomRight:
-            return CGPoint(x: rect.maxX, y: rect.maxY)
-        }
-    }
-
-    func screenPoint(in rect: CGRect) -> CGPoint {
-        switch self {
-        case .topLeft:
-            return CGPoint(x: rect.minX, y: rect.maxY)
-        case .topRight:
-            return CGPoint(x: rect.maxX, y: rect.maxY)
-        case .bottomLeft:
-            return CGPoint(x: rect.minX, y: rect.minY)
-        case .bottomRight:
-            return CGPoint(x: rect.maxX, y: rect.minY)
-        }
-    }
-}
-
-private struct OpenClickyVisualGuidanceRectangleDrag: Equatable {
-    let overlayID: UUID
-    let corner: OpenClickyVisualGuidanceRectangleCorner
-    let startRect: CGRect
 }
 
 private struct OpenClickyActiveControlGlowView: View {
@@ -3070,9 +2925,6 @@ class OverlayWindowManager {
     private weak var companionManager: CompanionManager?
     private var displayConfigurationObserver: NSObjectProtocol?
     private var interactivityTimer: Timer?
-    private var calibrationKeyboardEventTap: CFMachPort?
-    private var calibrationKeyboardRunLoopSource: CFRunLoopSource?
-    private var calibrationKeyboardLocalMonitor: Any?
     var hasShownOverlayBefore = false
 
     init() {
@@ -3115,10 +2967,7 @@ class OverlayWindowManager {
                 companionManager: companionManager
             )
 
-            let hostingView = OpenClickyOverlayHostingView(rootView: contentView)
-            hostingView.interactiveScreenRectsProvider = { [weak companionManager] in
-                companionManager?.cursorOverlayState.visualGuidanceInteractionFrames.values.flatMap { $0 } ?? []
-            }
+            let hostingView = NSHostingView(rootView: contentView)
             hostingView.frame = NSRect(origin: .zero, size: screen.frame.size)
             hostingView.autoresizingMask = [.width, .height]
             window.contentView = hostingView
@@ -3146,116 +2995,25 @@ class OverlayWindowManager {
         }
     }
 
-    // MARK: - Click-through / editing-handle interactivity
+    // MARK: - Click-through overlay interactivity
     //
     // The overlay windows are full-screen and sit at `.screenSaver` level, so
-    // they cover everything. They must stay click-through (`ignoresMouseEvents
-    // = true`) or they swallow every click on the machine. The visual-guidance
-    // editing handles are the only interactive pixels, so we sample the cursor
-    // position ~60Hz and flip the window under the cursor to interactive while
-    // the cursor is over a handle. Once a drag starts, keep that screen
-    // interactive until mouse-up so the handle doesn't disappear from under the
-    // user's pointer mid-correction.
+    // they cover everything. Keep them click-through (`ignoresMouseEvents =
+    // true`) so temporary visual guidance never swallows clicks in the app
+    // behind it.
     private func startInteractivityTracking() {
         stopInteractivityTracking()
         updateOverlayInteractivity()
-        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.updateOverlayInteractivity()
-            }
-        }
-        RunLoop.main.add(timer, forMode: .common)
-        interactivityTimer = timer
-        startCalibrationKeyboardTracking()
     }
 
     private func stopInteractivityTracking() {
         interactivityTimer?.invalidate()
         interactivityTimer = nil
-        stopCalibrationKeyboardTracking()
-    }
-
-    private func startCalibrationKeyboardTracking() {
-        if calibrationKeyboardLocalMonitor == nil {
-            calibrationKeyboardLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                guard let self, self.handleCalibrationKeyboardEvent(event) else { return event }
-                return nil
-            }
-        }
-        guard calibrationKeyboardEventTap == nil else { return }
-        let mask = CGEventMask(1 << CGEventType.keyDown.rawValue)
-        let tap = CGEvent.tapCreate(
-            tap: .cgSessionEventTap,
-            place: .headInsertEventTap,
-            options: .defaultTap,
-            eventsOfInterest: mask,
-            callback: { _, type, event, userInfo in
-                guard type == .keyDown, let userInfo else { return Unmanaged.passUnretained(event) }
-                let manager = Unmanaged<OverlayWindowManager>.fromOpaque(userInfo).takeUnretainedValue()
-                return MainActor.assumeIsolated {
-                    manager.handleCalibrationKeyboardEvent(event)
-                        ? nil
-                        : Unmanaged.passUnretained(event)
-                }
-            },
-            userInfo: Unmanaged.passUnretained(self).toOpaque()
-        )
-        guard let tap else { return }
-        calibrationKeyboardEventTap = tap
-        calibrationKeyboardRunLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
-        if let calibrationKeyboardRunLoopSource {
-            CFRunLoopAddSource(CFRunLoopGetMain(), calibrationKeyboardRunLoopSource, .commonModes)
-        }
-        CGEvent.tapEnable(tap: tap, enable: true)
-    }
-
-    private func stopCalibrationKeyboardTracking() {
-        if let calibrationKeyboardLocalMonitor {
-            NSEvent.removeMonitor(calibrationKeyboardLocalMonitor)
-            self.calibrationKeyboardLocalMonitor = nil
-        }
-        if let calibrationKeyboardRunLoopSource {
-            CFRunLoopRemoveSource(CFRunLoopGetMain(), calibrationKeyboardRunLoopSource, .commonModes)
-        }
-        calibrationKeyboardRunLoopSource = nil
-        if let calibrationKeyboardEventTap {
-            CGEvent.tapEnable(tap: calibrationKeyboardEventTap, enable: false)
-        }
-        calibrationKeyboardEventTap = nil
-    }
-
-    private func handleCalibrationKeyboardEvent(_ event: NSEvent) -> Bool {
-        let keyCode = CGKeyCode(event.keyCode)
-        guard keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126 else { return false }
-        let shiftHeld = event.modifierFlags.contains(.shift)
-        return companionManager?.nudgeVisualGuidanceCalibrationRectangle(keyCode: keyCode, shiftHeld: shiftHeld) ?? false
-    }
-
-    private func handleCalibrationKeyboardEvent(_ event: CGEvent) -> Bool {
-        let keyCode = CGKeyCode(event.getIntegerValueField(.keyboardEventKeycode))
-        guard keyCode == 123 || keyCode == 124 || keyCode == 125 || keyCode == 126 else { return false }
-        let shiftHeld = event.flags.contains(.maskShift)
-        return companionManager?.nudgeVisualGuidanceCalibrationRectangle(keyCode: keyCode, shiftHeld: shiftHeld) ?? false
     }
 
     private func updateOverlayInteractivity() {
-        guard !overlayWindows.isEmpty else { return }
-        let interactiveFrames = companionManager?
-            .cursorOverlayState
-            .visualGuidanceInteractionFrames
-            .values
-            .flatMap { $0 } ?? []
-        let activeDragOverlayID = companionManager?
-            .cursorOverlayState
-            .activeVisualGuidanceDragOverlayID
-        let mouse = NSEvent.mouseLocation
-        // Generous inset absorbs the one-render-frame lag between a drag moving
-        // the cursor and the handle frame re-registering at the new corner.
-        let overHandle = interactiveFrames.contains { $0.insetBy(dx: -14, dy: -14).contains(mouse) }
-        let isDraggingHandle = activeDragOverlayID != nil
         for window in overlayWindows {
-            let cursorOnThisScreen = window.frame.contains(mouse)
-            window.ignoresMouseEvents = !((overHandle || isDraggingHandle) && cursorOnThisScreen)
+            window.ignoresMouseEvents = true
         }
     }
 

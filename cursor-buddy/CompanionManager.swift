@@ -40,6 +40,14 @@ struct OpenClickyExternalProxyCursor: Identifiable {
     var accentHex: String?
 }
 
+private struct OpenClickyPendingVisualGuidanceCalibrationAnchor {
+    let overlayID: UUID
+    let caption: String
+    let predictedRect: CGRect
+    let screenFrame: CGRect
+    let createdAt: Date
+}
+
 @MainActor
 final class CursorOverlayState: ObservableObject {
     @Published var voiceState: CompanionVoiceState = .idle
@@ -53,8 +61,6 @@ final class CursorOverlayState: ObservableObject {
     @Published var externalPrimaryCaptionAccentHex: String?
     @Published var externalSecondaryCursors: [OpenClickyExternalProxyCursor] = []
     @Published var visualGuidanceOverlays: [OpenClickyVisualGuidanceOverlay] = []
-    @Published var visualGuidanceInteractionFrames: [UUID: [CGRect]] = [:]
-    @Published var activeVisualGuidanceDragOverlayID: UUID?
     @Published var activeControlGlowRect: CGRect?
     @Published var activeControlGlowLabel: String?
 }
@@ -1343,8 +1349,7 @@ final class CompanionManager: ObservableObject {
     private var externalPrimaryCursorMoveTask: Task<Void, Never>?
     private var externalSecondaryCursorClearTasks: [UUID: Task<Void, Never>] = [:]
     private var visualGuidanceOverlayClearTasks: [UUID: Task<Void, Never>] = [:]
-    private var visualGuidanceKeyboardCorrectionStartRects: [UUID: CGRect] = [:]
-    private var visualGuidanceKeyboardCorrectionCommitTasks: [UUID: Task<Void, Never>] = [:]
+    private var pendingVisualGuidanceCalibrationAnchor: OpenClickyPendingVisualGuidanceCalibrationAnchor?
     private var activeControlGlowClearTask: Task<Void, Never>?
     private var agentStatusCancellables: [UUID: AnyCancellable] = [:]
     private var agentActivityCancellables: [UUID: AnyCancellable] = [:]
@@ -2447,6 +2452,10 @@ final class CompanionManager: ObservableObject {
         } else {
             clampedOverlay.duration = max(clampedOverlay.duration, 20)
         }
+        if let calibrationAnchor = Self.pendingCalibrationAnchor(from: clampedOverlay) {
+            clampedOverlay.duration = max(clampedOverlay.duration, 120)
+            pendingVisualGuidanceCalibrationAnchor = calibrationAnchor
+        }
         guard clampedOverlay.isRenderable else { return }
         cursorOverlayState.visualGuidanceOverlays.removeAll { $0.id == clampedOverlay.id }
         cursorOverlayState.visualGuidanceOverlays.append(clampedOverlay)
@@ -2465,14 +2474,81 @@ final class CompanionManager: ObservableObject {
     private func removeVisualGuidanceOverlay(_ id: UUID) {
         visualGuidanceOverlayClearTasks[id]?.cancel()
         visualGuidanceOverlayClearTasks[id] = nil
-        visualGuidanceKeyboardCorrectionCommitTasks[id]?.cancel()
-        visualGuidanceKeyboardCorrectionCommitTasks[id] = nil
-        visualGuidanceKeyboardCorrectionStartRects[id] = nil
         cursorOverlayState.visualGuidanceOverlays.removeAll { $0.id == id }
-        cursorOverlayState.visualGuidanceInteractionFrames[id] = nil
-        if cursorOverlayState.activeVisualGuidanceDragOverlayID == id {
-            cursorOverlayState.activeVisualGuidanceDragOverlayID = nil
+    }
+
+    private static func pendingCalibrationAnchor(
+        from overlay: OpenClickyVisualGuidanceOverlay
+    ) -> OpenClickyPendingVisualGuidanceCalibrationAnchor? {
+        guard overlay.kind == .rectangle,
+              isVisualGuidanceCalibrationCaption(overlay.style.caption),
+              let rect = overlay.rect?.normalized.cgRect,
+              !rect.isNull,
+              rect.width > 1,
+              rect.height > 1 else {
+            return nil
         }
+        let center = CGPoint(x: rect.midX, y: rect.midY)
+        let screenFrame = NSScreen.screen(containingOrNearestTo: center)?.frame ?? rect
+        return OpenClickyPendingVisualGuidanceCalibrationAnchor(
+            overlayID: overlay.id,
+            caption: overlay.style.caption ?? "calibration anchor",
+            predictedRect: rect,
+            screenFrame: screenFrame,
+            createdAt: Date()
+        )
+    }
+
+    private func handleVisualGuidanceCalibrationCursorSampleIfNeeded(from transcript: String) -> Bool {
+        guard let pendingVisualGuidanceCalibrationAnchor else { return false }
+        let normalized = transcript
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        let confirmsSample = [
+            "mark it", "mark this", "highlight it", "highlight this",
+            "lined up", "line up", "anchor it", "save anchor",
+            "got it", "done", "that's it", "thats it"
+        ].contains { normalized.contains($0) }
+        guard confirmsSample else { return false }
+
+        let cursorPoint = NSEvent.mouseLocation
+        let predictedCenter = CGPoint(
+            x: pendingVisualGuidanceCalibrationAnchor.predictedRect.midX,
+            y: pendingVisualGuidanceCalibrationAnchor.predictedRect.midY
+        )
+        let delta = CGSize(
+            width: cursorPoint.x - predictedCenter.x,
+            height: cursorPoint.y - predictedCenter.y
+        )
+        let calibration = Self.updatedVisualGuidanceCalibrationOffset(
+            delta: delta,
+            for: pendingVisualGuidanceCalibrationAnchor.screenFrame
+        )
+        let caption = pendingVisualGuidanceCalibrationAnchor.caption
+        self.pendingVisualGuidanceCalibrationAnchor = nil
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual_guidance",
+            direction: "incoming",
+            event: "openclicky.visual_guidance.cursor_calibration_sampled",
+            fields: [
+                "overlayID": pendingVisualGuidanceCalibrationAnchor.overlayID.uuidString,
+                "label": caption,
+                "screenKey": calibration.screenKey,
+                "predictedX": Int(predictedCenter.x.rounded()),
+                "predictedY": Int(predictedCenter.y.rounded()),
+                "cursorX": Int(cursorPoint.x.rounded()),
+                "cursorY": Int(cursorPoint.y.rounded()),
+                "sampleDeltaX": Int(delta.width.rounded()),
+                "sampleDeltaY": Int(delta.height.rounded()),
+                "offsetX": Int(calibration.offset.width.rounded()),
+                "offsetY": Int(calibration.offset.height.rounded()),
+                "sampleCount": calibration.count
+            ]
+        )
+
+        speakShortSystemResponse(Self.visualGuidanceCalibrationSampleAcknowledgement(for: caption))
+        return true
     }
 
     private func showActiveControlGlow(
@@ -2578,207 +2654,6 @@ final class CompanionManager: ObservableObject {
         return sidePaddingRect.intersection(displayFrame)
     }
 
-    func setVisualGuidanceInteractionFrames(_ frames: [CGRect], for overlayID: UUID) {
-        cursorOverlayState.visualGuidanceInteractionFrames[overlayID] = frames
-    }
-
-    func setVisualGuidanceDragActive(_ overlayID: UUID?) {
-        cursorOverlayState.activeVisualGuidanceDragOverlayID = overlayID
-    }
-
-
-    func nudgeVisualGuidanceCalibrationRectangle(keyCode: CGKeyCode, shiftHeld: Bool) -> Bool {
-        let step: CGFloat = shiftHeld ? 10 : 1
-        let delta: CGSize
-        switch keyCode {
-        case 123: // Left arrow
-            delta = CGSize(width: -step, height: 0)
-        case 124: // Right arrow
-            delta = CGSize(width: step, height: 0)
-        case 125: // Down arrow
-            delta = CGSize(width: 0, height: -step)
-        case 126: // Up arrow
-            delta = CGSize(width: 0, height: step)
-        default:
-            return false
-        }
-
-        guard let overlay = cursorOverlayState.visualGuidanceOverlays.first(where: { overlay in
-            overlay.kind == .rectangle && Self.isVisualGuidanceCalibrationCaption(overlay.style.caption)
-        }),
-        let currentRect = overlay.rect?.normalized.cgRect else {
-            return false
-        }
-
-        let nudgedRect = currentRect.offsetBy(dx: delta.width, dy: delta.height)
-        let correctionStartRect = visualGuidanceKeyboardCorrectionStartRects[overlay.id] ?? currentRect
-        visualGuidanceKeyboardCorrectionStartRects[overlay.id] = correctionStartRect
-        updateVisualGuidanceRectangle(
-            id: overlay.id,
-            to: nudgedRect,
-            commitsCorrection: false
-        )
-        scheduleVisualGuidanceKeyboardCorrectionCommit(
-            overlayID: overlay.id,
-            correctionStartRect: correctionStartRect
-        )
-        return true
-    }
-
-    private func scheduleVisualGuidanceKeyboardCorrectionCommit(overlayID: UUID, correctionStartRect: CGRect) {
-        visualGuidanceKeyboardCorrectionCommitTasks[overlayID]?.cancel()
-        visualGuidanceKeyboardCorrectionCommitTasks[overlayID] = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 850_000_000)
-            await MainActor.run {
-                guard let self,
-                      let index = self.cursorOverlayState.visualGuidanceOverlays.firstIndex(where: { $0.id == overlayID }),
-                      let currentRect = self.cursorOverlayState.visualGuidanceOverlays[index].rect?.normalized.cgRect else {
-                    return
-                }
-                self.visualGuidanceKeyboardCorrectionCommitTasks[overlayID] = nil
-                self.visualGuidanceKeyboardCorrectionStartRects[overlayID] = nil
-                self.recordVisualGuidanceRectangleCorrection(
-                    overlayID: overlayID,
-                    previousRect: correctionStartRect,
-                    correctedRect: currentRect,
-                    caption: self.cursorOverlayState.visualGuidanceOverlays[index].style.caption
-                )
-            }
-        }
-    }
-
-    func updateVisualGuidanceRectangle(
-        id: UUID,
-        to screenRect: CGRect,
-        commitsCorrection: Bool,
-        correctionStartRect: CGRect? = nil
-    ) {
-        let desktopBounds = NSScreen.screens.reduce(CGRect.null) { partial, screen in
-            partial.union(screen.frame)
-        }
-        guard let index = cursorOverlayState.visualGuidanceOverlays.firstIndex(where: { $0.id == id }),
-              let previousRect = cursorOverlayState.visualGuidanceOverlays[index].rect?.normalized.cgRect else {
-            return
-        }
-
-        let correctedRect = OpenClickyVisualGuidanceRect(screenRect)
-            .normalized
-            .clamped(to: desktopBounds)
-            .cgRect
-        guard correctedRect.width > 1, correctedRect.height > 1 else { return }
-
-        cursorOverlayState.visualGuidanceOverlays[index].rect = OpenClickyVisualGuidanceRect(correctedRect)
-        if commitsCorrection {
-            recordVisualGuidanceRectangleCorrection(
-                overlayID: id,
-                previousRect: correctionStartRect ?? previousRect,
-                correctedRect: correctedRect,
-                caption: cursorOverlayState.visualGuidanceOverlays[index].style.caption
-            )
-        }
-
-        // Give the user time to finish the adjustment after the first touch.
-        let overlay = cursorOverlayState.visualGuidanceOverlays[index]
-        visualGuidanceOverlayClearTasks[id]?.cancel()
-        visualGuidanceOverlayClearTasks[id] = Task { [weak self] in
-            let nanoseconds = UInt64(max(30, overlay.duration) * 1_000_000_000)
-            try? await Task.sleep(nanoseconds: nanoseconds)
-            await MainActor.run {
-                self?.removeVisualGuidanceOverlay(id)
-            }
-        }
-    }
-
-    private func recordVisualGuidanceRectangleCorrection(
-        overlayID: UUID,
-        previousRect: CGRect,
-        correctedRect: CGRect,
-        caption: String?
-    ) {
-        let centerDelta = hypot(correctedRect.midX - previousRect.midX, correctedRect.midY - previousRect.midY)
-        let sizeDelta = hypot(correctedRect.width - previousRect.width, correctedRect.height - previousRect.height)
-        let correctionMagnitude = max(centerDelta, sizeDelta * 0.5)
-
-        let defaults = UserDefaults.standard
-        let countKey = "openclicky.visualGuidance.rectangleCorrection.count"
-        let toleranceKey = "openclicky.visualGuidance.rectangleCorrection.tolerancePoints"
-        let averageKey = "openclicky.visualGuidance.rectangleCorrection.averageMagnitude"
-
-        let oldCount = defaults.integer(forKey: countKey)
-        let newCount = oldCount + 1
-        let previousAverage = oldCount > 0 ? defaults.double(forKey: averageKey) : correctionMagnitude
-        let newAverage = ((previousAverage * Double(oldCount)) + correctionMagnitude) / Double(max(newCount, 1))
-        let previousTolerance = defaults.object(forKey: toleranceKey) == nil ? 18.0 : defaults.double(forKey: toleranceKey)
-        let newTolerance = min(96, max(6, previousTolerance * 0.70 + correctionMagnitude * 0.30))
-
-        defaults.set(newCount, forKey: countKey)
-        defaults.set(newAverage, forKey: averageKey)
-        defaults.set(newTolerance, forKey: toleranceKey)
-        recordVisualGuidanceCalibrationIfNeeded(
-            overlayID: overlayID,
-            previousRect: previousRect,
-            correctedRect: correctedRect,
-            caption: caption
-        )
-
-        OpenClickyMessageLogStore.shared.append(
-            lane: "visual_guidance",
-            direction: "incoming",
-            event: "openclicky.visual_guidance.rectangle_corrected",
-            fields: [
-                "overlayID": overlayID.uuidString,
-                "label": caption ?? "",
-                "previousX": Int(previousRect.minX.rounded()),
-                "previousY": Int(previousRect.minY.rounded()),
-                "previousWidth": Int(previousRect.width.rounded()),
-                "previousHeight": Int(previousRect.height.rounded()),
-                "correctedX": Int(correctedRect.minX.rounded()),
-                "correctedY": Int(correctedRect.minY.rounded()),
-                "correctedWidth": Int(correctedRect.width.rounded()),
-                "correctedHeight": Int(correctedRect.height.rounded()),
-                "centerDeltaPoints": Int(centerDelta.rounded()),
-                "sizeDeltaPoints": Int(sizeDelta.rounded()),
-                "learnedTolerancePoints": Int(newTolerance.rounded()),
-                "correctionCount": newCount
-            ]
-        )
-    }
-
-    private func recordVisualGuidanceCalibrationIfNeeded(
-        overlayID: UUID,
-        previousRect: CGRect,
-        correctedRect: CGRect,
-        caption: String?
-    ) {
-        guard Self.isVisualGuidanceCalibrationCaption(caption) else { return }
-
-        let predictedCenter = CGPoint(x: previousRect.midX, y: previousRect.midY)
-        let correctedCenter = CGPoint(x: correctedRect.midX, y: correctedRect.midY)
-        let delta = CGSize(
-            width: correctedCenter.x - predictedCenter.x,
-            height: correctedCenter.y - predictedCenter.y
-        )
-        let screenFrame = NSScreen.screen(containingOrNearestTo: correctedCenter)?.frame
-            ?? NSScreen.screen(containingOrNearestTo: predictedCenter)?.frame
-            ?? correctedRect
-        let calibration = Self.updatedVisualGuidanceCalibrationOffset(delta: delta, for: screenFrame)
-
-        OpenClickyMessageLogStore.shared.append(
-            lane: "visual_guidance",
-            direction: "incoming",
-            event: "openclicky.visual_guidance.calibration_updated",
-            fields: [
-                "overlayID": overlayID.uuidString,
-                "screenKey": calibration.screenKey,
-                "sampleDeltaX": Int(delta.width.rounded()),
-                "sampleDeltaY": Int(delta.height.rounded()),
-                "offsetX": Int(calibration.offset.width.rounded()),
-                "offsetY": Int(calibration.offset.height.rounded()),
-                "sampleCount": calibration.count
-            ]
-        )
-    }
-
     private func clearExternalProxyOverlay() {
         clearExternalPrimaryCaption()
         externalSecondaryCursorClearTasks.values.forEach { $0.cancel() }
@@ -2786,11 +2661,7 @@ final class CompanionManager: ObservableObject {
         cursorOverlayState.externalSecondaryCursors.removeAll()
         visualGuidanceOverlayClearTasks.values.forEach { $0.cancel() }
         visualGuidanceOverlayClearTasks.removeAll()
-        visualGuidanceKeyboardCorrectionCommitTasks.values.forEach { $0.cancel() }
-        visualGuidanceKeyboardCorrectionCommitTasks.removeAll()
-        visualGuidanceKeyboardCorrectionStartRects.removeAll()
         cursorOverlayState.visualGuidanceOverlays.removeAll()
-        cursorOverlayState.visualGuidanceInteractionFrames.removeAll()
         clearActiveControlGlow()
     }
 
@@ -4762,6 +4633,9 @@ final class CompanionManager: ObservableObject {
             return true
         }
         if handleAgentStatusQuestionIfNeeded(from: transcript) {
+            return true
+        }
+        if handleVisualGuidanceCalibrationCursorSampleIfNeeded(from: transcript) {
             return true
         }
         if handleAgentSelectionRequestIfNeeded(from: transcript, source: selectionSource) {
@@ -14487,7 +14361,7 @@ final class CompanionManager: ObservableObject {
     you have a small blue triangle cursor that can fly to and point at things on screen, and temporary drawing overlays that can highlight rectangles or draw short freehand scribbles. use them only when the user is asking for guidance on the current visible screen, the target is visibly present, and the target is directly relevant to the user's current question, instruction, or next step. if the user is merely discussing OpenClicky's behavior, routing, prompts, or how highlighting should work, answer conversationally and use [POINT:none].
 
     screen calibration:
-    if the user says "calibrate the screen", "calibrate our screens", "let's calibrate", or similar, choose one clearly visible, sharp-edged anchor point on the relevant screen — for example a window corner, title-bar control, button, app icon, toolbar item, or other stable UI feature. draw a small adjustable rectangle around that anchor and use a label containing "calibration anchor". tell the user briefly to drag the handles until it lines up. when they adjust it, OpenClicky records the correction and applies the learned per-screen coordinate offset to future POINT, RECT, and SCRIBBLE overlays. use one anchor per response; the user can repeat calibration for more samples or another screen.
+    if the user says "calibrate the screen", "calibrate our screens", "let's calibrate", or similar, run a four-anchor calibration sequence instead of picking a random target. OpenClicky's normal cursor buddy changes into a square box around the cursor while a calibration anchor is active. ask the user to put that square on these visible anchors, one per response and in this order when present: Finder icon, Trash/Dustbin, Apple menu, then the time/clock. if one of those anchors is not visible, choose the closest stable equivalent and say what changed. draw a small rectangle around the current anchor with a label containing both the target name and "calibration anchor", for example "Finder icon calibration anchor". tell the user briefly to move the square onto that anchor and say "mark it" when it is lined up. when they mark it, OpenClicky records the correction from the cursor square and uses the four samples to anchor that screen for future POINT, RECT, and SCRIBBLE overlays.
 
     your default should be: point at the exact visible target only when it clearly helps answer what the user is asking now, such as a named button, visible text, current file, prompt, setting, menu, error, or UI region they are referring to. do not point at generic, nearby, decorative, stale, or merely available UI.
 
@@ -14595,18 +14469,12 @@ final class CompanionManager: ObservableObject {
     }
 
     private func visualGuidanceCorrectionLearningPrompt() -> String {
-        let defaults = UserDefaults.standard
-        let count = defaults.integer(forKey: "openclicky.visualGuidance.rectangleCorrection.count")
         let calibrationSummary = Self.visualGuidanceCalibrationPromptSummary()
-        guard count > 0 || !calibrationSummary.isEmpty else { return "" }
-        let tolerance = defaults.double(forKey: "openclicky.visualGuidance.rectangleCorrection.tolerancePoints")
-        let correctionSummary = count > 0
-            ? "current learned rectangle correction tolerance is about \(Int(tolerance.rounded())) screen points; when placing rectangles, be a little more generous around uncertain targets and avoid overly tight boxes unless the visible target boundaries are unambiguous."
-            : "no ordinary rectangle correction tolerance has been learned yet."
+        guard !calibrationSummary.isEmpty else { return "" }
         return """
 
-        visual guidance correction learning:
-        the user can adjust rectangle overlays after OpenClicky draws them. treat these adjustments as correction feedback. \(correctionSummary)\(calibrationSummary)
+        visual guidance calibration memory:
+        manual rectangle dragging is disabled, so calibration uses the square cursor box instead: ask the user to move the square onto the current calibration anchor and say "mark it". Existing learned coordinate calibration may still be applied. \(calibrationSummary)
         """
     }
 
@@ -14682,6 +14550,25 @@ final class CompanionManager: ObservableObject {
         }
         guard !summaries.isEmpty else { return "" }
         return " coordinate calibration is active:\(summaries.joined())"
+    }
+
+    private static func visualGuidanceCalibrationSampleAcknowledgement(for caption: String) -> String {
+        let normalized = caption
+            .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: .current)
+            .lowercased()
+        if normalized.contains("finder") {
+            return "got the Finder anchor. next, ask OpenClicky to calibrate the Trash or Dustbin anchor."
+        }
+        if normalized.contains("trash") || normalized.contains("dustbin") || normalized.contains("bin") {
+            return "got the Trash anchor. next, ask OpenClicky to calibrate the Apple menu anchor."
+        }
+        if normalized.contains("apple") {
+            return "got the Apple menu anchor. next, ask OpenClicky to calibrate the time or clock anchor."
+        }
+        if normalized.contains("time") || normalized.contains("clock") {
+            return "got the time anchor. that gives OpenClicky the four screen anchors."
+        }
+        return "got that calibration anchor. repeat with the next screen anchor when you're ready."
     }
 
     /// Lane-aware web-search capability note. Only the Claude Agent SDK voice
