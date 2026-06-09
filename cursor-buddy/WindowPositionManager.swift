@@ -17,6 +17,13 @@ enum PermissionRequestPresentationDestination: Equatable {
     case systemSettings
 }
 
+enum OpenClickyPermissionPromptPolicy {
+    /// Temporary capability-development mode: never trigger macOS native
+    /// permission prompts from automatic app flows. Explicit permission UI can
+    /// still open System Settings without invoking one-time system dialogs.
+    static let nativePromptsEnabled = false
+}
+
 @MainActor
 class WindowPositionManager {
     static let permissionDragAssistantMessage = "I'm OpenClicky - drag me into the list above."
@@ -53,6 +60,10 @@ class WindowPositionManager {
         case .alreadyGranted:
             return .alreadyGranted
         case .systemPrompt:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                openAccessibilitySettings()
+                return .systemSettings
+            }
             hasAttemptedAccessibilitySystemPromptDuringCurrentLaunch = true
             let options = ["AXTrustedCheckOptionPrompt": true] as CFDictionary
             _ = AXIsProcessTrustedWithOptions(options)
@@ -120,8 +131,12 @@ class WindowPositionManager {
     static func shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch() -> Bool {
         shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch(
             hasScreenRecordingPermissionNow: hasScreenRecordingPermission(),
-            hasPreviouslyConfirmedScreenRecordingPermission: UserDefaults.standard.bool(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
+            hasPreviouslyConfirmedScreenRecordingPermission: hasPreviouslyConfirmedScreenRecordingPermission()
         )
+    }
+
+    static func hasPreviouslyConfirmedScreenRecordingPermission() -> Bool {
+        UserDefaults.standard.bool(forKey: hasPreviouslyConfirmedScreenRecordingPermissionUserDefaultsKey)
     }
 
     static func shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch(
@@ -149,6 +164,10 @@ class WindowPositionManager {
         case .alreadyGranted:
             return .alreadyGranted
         case .systemPrompt:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                openScreenRecordingSettings()
+                return .systemSettings
+            }
             hasAttemptedScreenRecordingSystemPromptDuringCurrentLaunch = true
             _ = CGRequestScreenCaptureAccess()
         case .systemSettings:

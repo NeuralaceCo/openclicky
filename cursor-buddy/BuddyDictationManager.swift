@@ -1135,6 +1135,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             currentPermissionProblem = nil
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                currentPermissionProblem = .microphoneAccessDenied
+                return false
+            }
             let isGranted = await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .audio) { isGranted in
                     continuation.resume(returning: isGranted)
@@ -1157,6 +1161,10 @@ final class BuddyDictationManager: NSObject, ObservableObject {
             currentPermissionProblem = nil
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                currentPermissionProblem = .speechRecognitionDenied
+                return false
+            }
             let isGranted = await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { authorizationStatus in
                     continuation.resume(returning: authorizationStatus == .authorized)

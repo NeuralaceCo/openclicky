@@ -847,6 +847,7 @@ final class OpenClickyMeetingNotesController: ObservableObject {
         case .authorized:
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else { return false }
             return await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     continuation.resume(returning: granted)
@@ -865,6 +866,11 @@ final class OpenClickyMeetingNotesController: ObservableObject {
         case .authorized:
             return
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                throw NSError(domain: "OpenClickyMeetingNotes", code: -11, userInfo: [
+                    NSLocalizedDescriptionKey: "Speech Recognition permission has not been granted for the selected transcription provider."
+                ])
+            }
             let status = await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { status in
                     continuation.resume(returning: status)

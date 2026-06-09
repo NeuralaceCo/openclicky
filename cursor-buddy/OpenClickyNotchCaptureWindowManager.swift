@@ -80,8 +80,31 @@ final class OpenClickyNotchCaptureWindowManager {
     private var anchorScreenOverride: NSScreen?
     private var collapsedHoverProbeTimer: Timer?
     private var foregroundAppActivationObserver: NSObjectProtocol?
+    private var foregroundContextRefreshTask: Task<Void, Never>?
+    private var foregroundContextSignature: String?
     private var foregroundAppIcon: NSImage?
     private var foregroundAppName: String = "Current app"
+    private var foregroundIntentLabel: String = ""
+    private var foregroundHeuristicIntentLabel: String = ""
+    private var foregroundVisualContextSignature: String?
+    private var latestForegroundIntentState: OpenClickyForegroundIntentState?
+    private weak var visualIntentCompanionManager: CompanionManager?
+    private var visualIntentCaptureTask: Task<Void, Never>?
+    private var visualIntentInferenceTask: Task<Void, Never>?
+    private var visualIntentDetailedSchedulerTask: Task<Void, Never>?
+    private var visualIntentDetailedTasks: [Int: Task<Void, Never>] = [:]
+    private var visualIntentDetailedTaskSequence = 0
+    private var visualIntentFrames: [OpenClickyNotchVisualIntentFrame] = []
+    private var visualIntentFramesRevision = 0
+    private var visualIntentLastProcessedRevision = 0
+    private var visualIntentLastDetailedRevision = 0
+    private var visualIntentLastDetailedStartedAt: Date?
+    private var visualIntentDiagnosticLogTimes: [String: Date] = [:]
+    private var latestVisualIntentLabel: String?
+    private var latestVisualIntentContextSignature: String?
+    private var latestVisualIntentUpdatedAt: Date?
+    private let browserTabContextProvider = OpenClickyBrowserTabContextProvider.shared
+    private let foregroundIntentProvider = OpenClickyForegroundIntentProvider()
     private var contextAffordanceTimer: Timer?
     private var lastContextAffordanceSignature: String?
     private var lastContextAffordanceShownAt: Date?
@@ -105,16 +128,16 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let compactBuiltInVoicePanelWidth: CGFloat = 112
     private static let minimumVoicePanelWidth: CGFloat = 180
     private static let minimumExternalCollapsedPanelWidth: CGFloat = compactCollapsedChromeWidth
-    private static let maximumExternalCollapsedPanelWidth: CGFloat = 190
+    private static let maximumExternalCollapsedPanelWidth: CGFloat = 360
     private static let minimumExternalNonNotchedStatusPanelWidth: CGFloat = 260
-    private static let maximumExternalNonNotchedStatusPanelWidth: CGFloat = 300
-    private static let maximumExpandedStatusPanelWidth: CGFloat = 320
+    private static let maximumExternalNonNotchedStatusPanelWidth: CGFloat = 520
+    private static let maximumExpandedStatusPanelWidth: CGFloat = 520
     private static let collapsedLabelFont = NSFont.systemFont(ofSize: 13, weight: .heavy)
-    private static let collapsedLabelMaxWidth: CGFloat = 300
+    private static let collapsedLabelMaxWidth: CGFloat = 430
     // leading pad + app icon (28) + stack spacing (4) + gap before trailing (8) + play/dots (14) + trailing pad
     private static let collapsedChromeWidth: CGFloat = 10 + 28 + 4 + 8 + 14 + 16
     private static let statusLozengeHeight: CGFloat = 38
-    private static let collapsedPanelHeight: CGFloat = statusLozengeHeight
+    fileprivate static let collapsedPanelHeight: CGFloat = 300
     private static let expandedHandleWidth: CGFloat = 96
     private static let expandedHandleHeight: CGFloat = 10
     private static let textPanelHeight: CGFloat = 112
@@ -128,6 +151,35 @@ final class OpenClickyNotchCaptureWindowManager {
     private static let screenEdgePadding: CGFloat = 12
     private static let escapeKeyCode: UInt16 = 53
     private static let contextAffordanceCooldown: TimeInterval = 12
+    private static let visualIntentCaptureIntervalNanoseconds: UInt64 = 200_000_000
+    private static let visualIntentInferenceIdleSleepNanoseconds: UInt64 = 100_000_000
+    private static let visualIntentDetailedScheduleIntervalNanoseconds: UInt64 = 200_000_000
+    private static let visualIntentFrameRetention: TimeInterval = 5
+    private static let visualIntentMaximumFrameCount = 25
+    private static let visualIntentFastMaximumFrameCount = 1
+    private static let visualIntentDetailedMaximumFrameCount = 5
+    private static let visualIntentDetailedMaximumConcurrentTasks = 3
+    private static let visualIntentLabelTTL: TimeInterval = 20
+    private static let visualIntentDiagnosticLogInterval: TimeInterval = 5
+
+    private struct OpenClickyNotchVisualIntentFrame {
+        let capturedAt: Date
+        let imageData: Data
+        let captureLabel: String
+        let appName: String?
+        let bundleIdentifier: String?
+        let screenshotWidthInPixels: Int
+        let screenshotHeightInPixels: Int
+        let foregroundState: OpenClickyForegroundIntentState?
+        let contextSignature: String?
+    }
+
+    private struct OpenClickyNotchVisualIntentSnapshot {
+        let revision: Int
+        let contextSignature: String?
+        let foregroundSummary: String
+        let images: [(data: Data, label: String)]
+    }
 
     init() {
         mainPanelContentSizeObserver = NotificationCenter.default.addObserver(
@@ -163,8 +215,10 @@ final class OpenClickyNotchCaptureWindowManager {
                     appIcon: appIcon,
                     name: appName
                 )
+                self?.restartForegroundContextRefresh()
             }
         }
+        restartForegroundContextRefresh()
         accentThemeObserver = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification,
             object: nil,
@@ -186,6 +240,11 @@ final class OpenClickyNotchCaptureWindowManager {
         if let observer = foregroundAppActivationObserver {
             NSWorkspace.shared.notificationCenter.removeObserver(observer)
         }
+        foregroundContextRefreshTask?.cancel()
+        visualIntentCaptureTask?.cancel()
+        visualIntentInferenceTask?.cancel()
+        visualIntentDetailedSchedulerTask?.cancel()
+        visualIntentDetailedTasks.values.forEach { $0.cancel() }
     }
 
     func showPersistentPill(
@@ -201,13 +260,15 @@ final class OpenClickyNotchCaptureWindowManager {
         // from the primary external monitor.
         pinAnchorScreenToActiveInteractionIfNeeded()
         let primaryScreen = preferredAnchorScreen()
-        let collapsedWidth = Self.collapsedPanelWidth(for: primaryScreen, appName: foregroundAppName)
+        let collapsedWidth = Self.collapsedPanelWidth(for: primaryScreen, appName: foregroundAppName, intentLabel: foregroundIntentLabel)
         ensureCaptureContentView(width: collapsedWidth, height: Self.collapsedPanelHeight)
         let accentColor = Self.nsAccentColor(for: accentTheme)
         persistentAgentLiveActivity = Self.agentLiveActivity(in: companionManager)
         persistentHasRunningAgentWork = persistentAgentLiveActivity.isActive
         persistentAccentColor = accentColor
         persistentSubmitText = submitText
+        visualIntentCompanionManager = companionManager
+        restartVisualIntentCaptureIfNeeded(companionManager: companionManager)
         persistentShowMainPanel = { [weak self, weak companionManager] in
             guard let companionManager else { return }
             self?.showMainPanel(companionManager: companionManager)
@@ -216,6 +277,7 @@ final class OpenClickyNotchCaptureWindowManager {
             accentColor: accentColor,
             foregroundAppIcon: foregroundAppIcon,
             foregroundAppName: foregroundAppName,
+            foregroundIntentLabel: foregroundIntentLabel,
             hasRunningAgentWork: persistentHasRunningAgentWork,
             hidesAppNameText: Self.hidesCollapsedAppNameText(on: primaryScreen),
             expand: { [weak self] in
@@ -245,22 +307,9 @@ final class OpenClickyNotchCaptureWindowManager {
     ) -> Bool {
         #if canImport(DynamicNotchKit)
         guard let screen, Self.hasPhysicalNotch(on: screen) else { return false }
-        let hasRunningAgentWork = companionManager.map(Self.hasRunningAgentWork(in:)) ?? persistentHasRunningAgentWork
-        dynamicNotchKitBridge.showCollapsed(
-            on: screen,
-            accentColor: accentColor,
-            foregroundAppIcon: foregroundAppIcon,
-            foregroundAppName: foregroundAppName,
-            hasRunningAgentWork: hasRunningAgentWork,
-            agentLiveActivity: companionManager.map(Self.agentLiveActivity(in:)) ?? persistentAgentLiveActivity,
-            openMainPanel: { [weak self] in
-                self?.pinAnchorScreenToActiveInteractionIfNeeded()
-                self?.persistentShowMainPanel?()
-            },
-            submitText: persistentSubmitText ?? { _ in }
-        )
-        isUsingDynamicNotchKitStatusSurface = true
-        return true
+        dynamicNotchKitBridge.hide()
+        isUsingDynamicNotchKitStatusSurface = false
+        return false
         #else
         return false
         #endif
@@ -297,22 +346,9 @@ final class OpenClickyNotchCaptureWindowManager {
         guard let screen, Self.hasPhysicalNotch(on: screen) else { return false }
         switch activeMode {
         case .collapsedText:
-            dynamicNotchKitBridge.showCollapsed(
-                on: screen,
-                accentColor: persistentAccentColor,
-                foregroundAppIcon: foregroundAppIcon,
-                foregroundAppName: foregroundAppName,
-                hasRunningAgentWork: persistentHasRunningAgentWork,
-                agentLiveActivity: persistentAgentLiveActivity,
-                openMainPanel: { [weak self] in
-                    self?.pinAnchorScreenToActiveInteractionIfNeeded()
-                    self?.persistentShowMainPanel?()
-                },
-                submitText: persistentSubmitText ?? { _ in },
-                opensExpanded: opensExpanded
-            )
-            isUsingDynamicNotchKitStatusSurface = true
-            return true
+            dynamicNotchKitBridge.hide()
+            isUsingDynamicNotchKitStatusSurface = false
+            return false
         case .voice:
             dynamicNotchKitBridge.showVoice(
                 currentVoicePhase,
@@ -504,12 +540,13 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func collapseToPill(accentColor: NSColor, submitText: @escaping (String) -> Void) {
         activeMode = .collapsedText
-        let collapsedWidth = Self.collapsedPanelWidth(for: preferredAnchorScreen(), appName: foregroundAppName)
+        let collapsedWidth = Self.collapsedPanelWidth(for: preferredAnchorScreen(), appName: foregroundAppName, intentLabel: foregroundIntentLabel)
         ensureCaptureContentView(width: collapsedWidth, height: Self.collapsedPanelHeight)
         contentView?.configureCollapsed(
             accentColor: accentColor,
             foregroundAppIcon: foregroundAppIcon,
             foregroundAppName: foregroundAppName,
+            foregroundIntentLabel: foregroundIntentLabel,
             hasRunningAgentWork: persistentHasRunningAgentWork,
             hidesAppNameText: Self.hidesCollapsedAppNameText(on: preferredAnchorScreen()),
             expand: { [weak self] in
@@ -824,8 +861,18 @@ final class OpenClickyNotchCaptureWindowManager {
         let screen = preferredAnchorScreen() ?? panel.screen ?? NSScreen.main ?? NSScreen.screens.first
         if let screen, Self.hasPhysicalNotch(on: screen) {
             let staticFrame = Self.physicalNotchWindowFrame(on: screen)
-            panel.setFrame(staticFrame, display: true, animate: false)
-            contentView?.setCanvas(size: staticFrame.size)
+            let statusSize = NSSize(
+                width: max(width, staticFrame.width),
+                height: max(height, staticFrame.height)
+            )
+            let statusFrame = NSRect(
+                x: Self.centeredX(for: statusSize, on: screen),
+                y: Self.statusLozengeY(for: statusSize, on: screen),
+                width: statusSize.width,
+                height: statusSize.height
+            )
+            panel.setFrame(statusFrame, display: true, animate: false)
+            contentView?.setCanvas(size: statusSize)
             repositionMainPanelIfVisible()
             return
         }
@@ -1099,12 +1146,12 @@ final class OpenClickyNotchCaptureWindowManager {
             if #available(macOS 12.0, *) {
                 safeTop = screen.safeAreaInsets.top
             }
-            pillBottomY = screen.frame.maxY - max(38, safeTop + 6)
+            pillBottomY = screen.frame.maxY - max(Self.collapsedPanelHeight, safeTop + 6)
         } else if let panel, panel.isVisible {
             pillBottomY = panel.frame.minY
         } else {
             let captureSize = NSSize(
-                width: Self.collapsedPanelWidth(for: screen, appName: foregroundAppName),
+                width: Self.collapsedPanelWidth(for: screen, appName: foregroundAppName, intentLabel: foregroundIntentLabel),
                 height: Self.collapsedPanelHeight
             )
             pillBottomY = Self.statusLozengeY(for: captureSize, on: screen)
@@ -1189,16 +1236,16 @@ final class OpenClickyNotchCaptureWindowManager {
             anchorScreenOverride = hoveredScreen
             let width = activeMode == .voice
                 ? Self.voicePanelWidth(for: hoveredScreen, appName: foregroundAppName)
-                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName)
+                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName, intentLabel: foregroundIntentLabel)
             let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
             resizeAndReposition(width: width, height: height)
         }
         if showDynamicNotchKitStatusForCurrentModeIfAvailable(on: hoveredScreen, opensExpanded: true) {
             panel?.orderOut(nil)
-        } else if !Self.hasPhysicalNotch(on: hoveredScreen) {
+        } else {
             let width = activeMode == .voice
                 ? Self.voicePanelWidth(for: hoveredScreen, appName: foregroundAppName)
-                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName)
+                : Self.collapsedPanelWidth(for: hoveredScreen, appName: foregroundAppName, intentLabel: foregroundIntentLabel)
             let height = activeMode == .voice ? Self.voicePanelHeight : Self.collapsedPanelHeight
             showFallbackStatusPanel(width: width, height: height)
         }
@@ -1286,21 +1333,59 @@ final class OpenClickyNotchCaptureWindowManager {
     // Chrome with the name label hidden: leading pad + app icon (28) + gap (8) + play/dots (14) + trailing pad
     private static let compactCollapsedChromeWidth: CGFloat = 10 + 28 + 8 + 14 + 16
 
-    private static func intrinsicCollapsedWidth(forAppName name: String) -> CGFloat {
-        guard !isPlaceholderAppName(name) else {
+    private static func intrinsicCollapsedWidth(forAppName name: String, intentLabel: String = "") -> CGFloat {
+        let intentLines = visibleIntentLines(from: intentLabel)
+        guard !isPlaceholderAppName(name) || !intentLines.isEmpty else {
             return Self.compactCollapsedChromeWidth
         }
-        let textWidth = (name as NSString).size(withAttributes: [.font: Self.collapsedLabelFont]).width
-        return Self.collapsedChromeWidth + ceil(textWidth)
+        let textWidth = isPlaceholderAppName(name)
+            ? 0
+            : (name as NSString).size(withAttributes: [.font: Self.collapsedLabelFont]).width
+        let compactIntentWidth = intentLines.map { line in
+            (line as NSString).size(withAttributes: [
+            .font: NSFont.systemFont(ofSize: 9.5, weight: .semibold)
+            ]).width
+        }.max() ?? 0
+        return Self.collapsedChromeWidth + ceil(max(textWidth, compactIntentWidth))
     }
 
-    private static func collapsedPanelWidth(for screen: NSScreen?, appName: String = "Current app") -> CGFloat {
+    private static func compactIntentLine(from intentLabel: String) -> String {
+        visibleIntentLines(from: intentLabel).first ?? ""
+    }
+
+    private static func compactIntentText(from intentLabel: String) -> String {
+        visibleIntentLines(from: intentLabel).joined(separator: "\n")
+    }
+
+    private static func visibleIntentLines(from intentLabel: String, limit: Int = 4) -> [String] {
+        intentLabel
+            .components(separatedBy: .newlines)
+            .map(Self.displayIntentLine)
+            .filter { !$0.isEmpty }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    private static func displayIntentLine(_ line: String) -> String {
+        line
+            .replacingOccurrences(
+                of: #"^\s*(?:[-*]|\d+[.)]|line\s*\d+\s*[:.)-]?|intent\s*[:.)-]?|focus\s*[:.)-]?|recent\s*[:.)-]?|next\s*[:.)-]?)\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func collapsedPanelWidth(for screen: NSScreen?, appName: String = "Current app", intentLabel: String = "") -> CGFloat {
         guard let screen else { return Self.compactCollapsedChromeWidth }
+        let intrinsic = intrinsicCollapsedWidth(forAppName: appName, intentLabel: intentLabel)
         if isLikelyBuiltInNotchScreen(screen) {
-            return Self.compactCollapsedChromeWidth
+            return min(
+                Self.maximumExternalNonNotchedStatusPanelWidth,
+                max(Self.minimumExternalNonNotchedStatusPanelWidth, intrinsic)
+            )
         }
 
-        let intrinsic = intrinsicCollapsedWidth(forAppName: appName)
         if usesWideExternalNonNotchedStatusPill(on: screen) {
             return min(
                 Self.maximumExternalNonNotchedStatusPanelWidth,
@@ -1339,9 +1424,8 @@ final class OpenClickyNotchCaptureWindowManager {
             && frame.height <= Self.textPanelHeight
     }
 
-    private static func hidesCollapsedAppNameText(on screen: NSScreen?) -> Bool {
-        guard let screen else { return false }
-        return isLikelyBuiltInNotchScreen(screen)
+    private static func hidesCollapsedAppNameText(on _: NSScreen?) -> Bool {
+        false
     }
 
     private static func expandedStatusPanelWidth(for screen: NSScreen) -> CGFloat {
@@ -1512,19 +1596,684 @@ final class OpenClickyNotchCaptureWindowManager {
 
     private func updateForegroundAppIcon(bundleIdentifier: String?, bundlePath: String?, appIcon: NSImage?, name: String) {
         guard bundleIdentifier != Bundle.main.bundleIdentifier else { return }
+        foregroundContextSignature = nil
+        let resolvedIcon: NSImage?
         if let appIcon {
-            foregroundAppIcon = appIcon
+            resolvedIcon = appIcon
         } else if let bundlePath {
-            foregroundAppIcon = NSWorkspace.shared.icon(forFile: bundlePath)
+            resolvedIcon = NSWorkspace.shared.icon(forFile: bundlePath)
         } else {
-            foregroundAppIcon = nil
+            resolvedIcon = nil
         }
+        applyForegroundContext(icon: resolvedIcon, name: name)
+    }
+
+    private func restartForegroundContextRefresh() {
+        foregroundContextRefreshTask?.cancel()
+        foregroundContextRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.refreshForegroundContextFromFrontmostApplication()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func refreshForegroundContextFromFrontmostApplication() async {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return
+        }
+
+        let appName = app.localizedName ?? app.bundleURL?.deletingPathExtension().lastPathComponent ?? "Current app"
+        let appIcon = app.icon ?? NSWorkspace.shared.icon(forFile: app.bundleURL?.path ?? "")
+
+        if let browser = OpenClickyBrowserTabContextProvider.browserApplication(
+            bundleIdentifier: app.bundleIdentifier,
+            displayName: appName
+        ),
+           let tabContext = await browserTabContextProvider.activeTabContext(for: browser) {
+            let icon = tabContext.faviconData.flatMap(NSImage.init(data:)) ?? appIcon
+            let state = OpenClickyForegroundIntentState(
+                capturedAt: Date(),
+                bundleIdentifier: app.bundleIdentifier,
+                appName: appName,
+                contextTitle: tabContext.displayTitle,
+                rawWindowTitle: tabContext.title,
+                browserURLString: tabContext.pageURLString,
+                isBrowser: true
+            )
+            updateLatestForegroundIntentState(state)
+            let intentLabel = await foregroundIntentProvider.intentLabel(for: state)
+            applyForegroundContext(
+                icon: icon,
+                name: tabContext.displayTitle,
+                intentLabel: intentLabel,
+                signature: "browser:\(tabContext.signature):\(intentLabel ?? "")"
+            )
+            return
+        }
+
+        let rawWindowTitle = OpenClickyForegroundContextTitleProvider.primaryWindowTitle(
+            for: app,
+            fallbackName: appName
+        )
+        let contextualTitle = OpenClickyForegroundContextTitleProvider.displayTitle(
+            for: app,
+            fallbackName: appName
+        )
+        let state = OpenClickyForegroundIntentState(
+            capturedAt: Date(),
+            bundleIdentifier: app.bundleIdentifier,
+            appName: appName,
+            contextTitle: contextualTitle,
+            rawWindowTitle: rawWindowTitle,
+            browserURLString: nil,
+            isBrowser: false
+        )
+        updateLatestForegroundIntentState(state)
+        let intentLabel = await foregroundIntentProvider.intentLabel(for: state)
+        applyForegroundContext(
+            icon: appIcon,
+            name: contextualTitle,
+            intentLabel: intentLabel,
+            signature: [
+                "app",
+                app.bundleIdentifier ?? "",
+                contextualTitle,
+                rawWindowTitle ?? "",
+                intentLabel ?? "",
+                "\(app.processIdentifier)"
+            ].joined(separator: "\u{1f}")
+        )
+    }
+
+    private func applyForegroundContext(icon: NSImage?, name: String, intentLabel: String? = nil, signature: String? = nil) {
+        if let signature, foregroundContextSignature == signature {
+            return
+        }
+        foregroundContextSignature = signature
+        foregroundAppIcon = icon
         foregroundAppName = name
-        contentView?.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
+        foregroundHeuristicIntentLabel = intentLabel?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        foregroundIntentLabel = activeForegroundIntentLabel()
+        renderForegroundContext()
+    }
+
+    private func updateLatestForegroundIntentState(_ state: OpenClickyForegroundIntentState) {
+        let contextSignature = Self.visualIntentContextSignature(for: state)
+        if foregroundVisualContextSignature != contextSignature {
+            foregroundVisualContextSignature = contextSignature
+            latestVisualIntentLabel = nil
+            latestVisualIntentContextSignature = nil
+            latestVisualIntentUpdatedAt = nil
+            visualIntentFrames.removeAll()
+            visualIntentFramesRevision &+= 1
+            visualIntentLastDetailedRevision = 0
+            visualIntentLastDetailedStartedAt = nil
+        }
+        latestForegroundIntentState = state
+    }
+
+    private func activeForegroundIntentLabel() -> String {
+        if let latestVisualIntentLabel,
+           latestVisualIntentContextSignature == foregroundVisualContextSignature,
+           let latestVisualIntentUpdatedAt,
+           Date().timeIntervalSince(latestVisualIntentUpdatedAt) <= Self.visualIntentLabelTTL {
+            return latestVisualIntentLabel
+        }
+        return foregroundHeuristicIntentLabel
+    }
+
+    private func renderForegroundContext() {
+        contentView?.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName, intentLabel: foregroundIntentLabel)
         if isUsingDynamicNotchKitStatusSurface {
-            dynamicNotchKitBridge.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
+            dynamicNotchKitBridge.updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName, intentLabel: foregroundIntentLabel)
         }
         resizePillToCurrentAppName()
+    }
+
+    private static func visualIntentContextSignature(for state: OpenClickyForegroundIntentState) -> String {
+        [
+            state.bundleIdentifier ?? "",
+            state.contextTitle,
+            state.rawWindowTitle ?? "",
+            state.browserURLString ?? "",
+            state.isBrowser ? "browser" : "app"
+        ].joined(separator: "\u{1f}")
+    }
+
+    private func restartVisualIntentCaptureIfNeeded(companionManager: CompanionManager) {
+        visualIntentCompanionManager = companionManager
+        startVisualIntentInferenceLoopIfNeeded(companionManager: companionManager)
+        startVisualIntentDetailedSchedulerIfNeeded(companionManager: companionManager)
+        guard visualIntentCaptureTask == nil else { return }
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "internal",
+            event: "notch.visual_intent.loop_started",
+            fields: [
+                "captureFps": 1_000_000_000.0 / Double(Self.visualIntentCaptureIntervalNanoseconds),
+                "captureIntervalSeconds": Double(Self.visualIntentCaptureIntervalNanoseconds) / 1_000_000_000,
+                "maximumFrameCount": Self.visualIntentMaximumFrameCount,
+                "fastMaximumFrameCount": Self.visualIntentFastMaximumFrameCount,
+                "detailedMaximumFrameCount": Self.visualIntentDetailedMaximumFrameCount,
+                "detailedScheduleIntervalSeconds": Double(Self.visualIntentDetailedScheduleIntervalNanoseconds) / 1_000_000_000,
+                "detailedMaximumConcurrentTasks": Self.visualIntentDetailedMaximumConcurrentTasks,
+                "retentionSeconds": Self.visualIntentFrameRetention
+            ]
+        )
+        visualIntentCaptureTask = Task { [weak self, weak companionManager] in
+            while !Task.isCancelled {
+                if let self, let companionManager {
+                    await self.captureVisualIntentFrame(companionManager: companionManager)
+                }
+                try? await Task.sleep(nanoseconds: Self.visualIntentCaptureIntervalNanoseconds)
+            }
+        }
+    }
+
+    private func captureVisualIntentFrame(companionManager: CompanionManager) async {
+        guard activeMode == .collapsedText else {
+            return
+        }
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Bundle.main.bundleIdentifier {
+            appendThrottledVisualIntentDiagnostic(
+                event: "notch.visual_intent.capture_skipped",
+                reason: "openclicky_frontmost",
+                fields: ["reason": "openclicky_frontmost"]
+            )
+            return
+        }
+        guard Self.canCaptureVisualIntentWithoutPrompt() else {
+            appendThrottledVisualIntentDiagnostic(
+                event: "notch.visual_intent.capture_skipped",
+                reason: "screen_recording_unavailable",
+                fields: Self.screenCapturePermissionDiagnosticFields(
+                    reason: "screen_recording_unavailable"
+                )
+            )
+            return
+        }
+
+        do {
+            let captures = try await CompanionScreenCaptureUtility.captureFocusedWindowAsJPEG()
+            guard let capture = captures.first else { return }
+            let now = Date()
+            let frame = OpenClickyNotchVisualIntentFrame(
+                capturedAt: now,
+                imageData: capture.imageData,
+                captureLabel: capture.label,
+                appName: capture.appName,
+                bundleIdentifier: capture.bundleIdentifier,
+                screenshotWidthInPixels: capture.screenshotWidthInPixels,
+                screenshotHeightInPixels: capture.screenshotHeightInPixels,
+                foregroundState: latestForegroundIntentState,
+                contextSignature: foregroundVisualContextSignature
+            )
+            appendVisualIntentFrame(frame, relativeTo: now)
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual",
+                direction: "incoming",
+                event: "notch.visual_intent.frame_captured",
+                fields: [
+                    "captureIntervalSeconds": Double(Self.visualIntentCaptureIntervalNanoseconds) / 1_000_000_000,
+                    "retentionSeconds": Self.visualIntentFrameRetention,
+                    "retainedFrameCount": visualIntentFrames.count,
+                    "maximumFrameCount": Self.visualIntentMaximumFrameCount,
+                    "label": frame.captureLabel,
+                    "appName": frame.appName ?? "",
+                    "bundleIdentifier": frame.bundleIdentifier ?? "",
+                    "dimensions": "\(frame.screenshotWidthInPixels)x\(frame.screenshotHeightInPixels)",
+                    "contextSignature": frame.contextSignature ?? ""
+                ]
+            )
+            startVisualIntentInferenceLoopIfNeeded(companionManager: companionManager)
+            startVisualIntentDetailedSchedulerIfNeeded(companionManager: companionManager)
+        } catch {
+            if CompanionScreenCaptureUtility.isScreenCaptureAuthorizationError(error) {
+                WindowPositionManager.clearPreviouslyConfirmedScreenRecordingPermission()
+            }
+            appendThrottledVisualIntentDiagnostic(
+                event: "notch.visual_intent.capture_failed",
+                reason: error.localizedDescription,
+                fields: Self.screenCapturePermissionDiagnosticFields(
+                    reason: "screen_capture_failed",
+                    error: error.localizedDescription
+                )
+            )
+        }
+    }
+
+    private static func canCaptureVisualIntentWithoutPrompt() -> Bool {
+        WindowPositionManager.shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch()
+    }
+
+    private static func screenCapturePermissionDiagnosticFields(reason: String, error: String? = nil) -> [String: Any] {
+        var fields: [String: Any] = [
+            "reason": reason,
+            "hasLiveScreenRecordingPermission": WindowPositionManager.hasScreenRecordingPermission(),
+            "hasPreviouslyConfirmedScreenRecordingPermission": WindowPositionManager.hasPreviouslyConfirmedScreenRecordingPermission(),
+            "bundleIdentifier": Bundle.main.bundleIdentifier ?? "",
+            "bundlePath": Bundle.main.bundleURL.path,
+            "executablePath": Bundle.main.executableURL?.path ?? ""
+        ]
+        if let error {
+            fields["error"] = error
+        }
+        return fields
+    }
+
+    private func appendThrottledVisualIntentDiagnostic(
+        event: String,
+        reason: String,
+        fields: [String: Any]
+    ) {
+        let key = "\(event):\(reason)"
+        let now = Date()
+        if let lastLoggedAt = visualIntentDiagnosticLogTimes[key],
+           now.timeIntervalSince(lastLoggedAt) < Self.visualIntentDiagnosticLogInterval {
+            return
+        }
+        visualIntentDiagnosticLogTimes[key] = now
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: event.hasSuffix("capture_failed") ? "error" : "internal",
+            event: event,
+            fields: fields
+        )
+    }
+
+    private func appendVisualIntentFrame(_ frame: OpenClickyNotchVisualIntentFrame, relativeTo date: Date) {
+        visualIntentFrames.append(frame)
+        let cutoff = date.addingTimeInterval(-Self.visualIntentFrameRetention)
+        visualIntentFrames.removeAll { $0.capturedAt < cutoff }
+        if visualIntentFrames.count > Self.visualIntentMaximumFrameCount {
+            visualIntentFrames.removeFirst(visualIntentFrames.count - Self.visualIntentMaximumFrameCount)
+        }
+        visualIntentFramesRevision &+= 1
+    }
+
+    private func startVisualIntentInferenceLoopIfNeeded(companionManager: CompanionManager) {
+        visualIntentCompanionManager = companionManager
+        guard visualIntentInferenceTask == nil else { return }
+        visualIntentInferenceTask = Task { [weak self, weak companionManager] in
+            guard let self, let companionManager else { return }
+            await self.runVisualIntentInferenceLoop(companionManager: companionManager)
+        }
+    }
+
+    private func startVisualIntentDetailedSchedulerIfNeeded(companionManager: CompanionManager) {
+        visualIntentCompanionManager = companionManager
+        guard visualIntentDetailedSchedulerTask == nil else { return }
+        visualIntentDetailedSchedulerTask = Task { [weak self, weak companionManager] in
+            guard let self, let companionManager else { return }
+            await self.runVisualIntentDetailedSchedulerLoop(companionManager: companionManager)
+        }
+    }
+
+    private func runVisualIntentDetailedSchedulerLoop(companionManager: CompanionManager) async {
+        defer {
+            visualIntentDetailedSchedulerTask = nil
+        }
+
+        while !Task.isCancelled {
+            guard activeMode == .collapsedText else {
+                try? await Task.sleep(nanoseconds: Self.visualIntentDetailedScheduleIntervalNanoseconds)
+                continue
+            }
+            let snapshot = visualIntentInferenceSnapshot(
+                maximumImageCount: Self.visualIntentDetailedMaximumFrameCount,
+                sampleAcrossRetainedFrames: true
+            )
+            scheduleDetailedVisualContextIfNeeded(snapshot: snapshot, companionManager: companionManager)
+            try? await Task.sleep(nanoseconds: Self.visualIntentDetailedScheduleIntervalNanoseconds)
+        }
+    }
+
+    private func runVisualIntentInferenceLoop(companionManager: CompanionManager) async {
+        defer {
+            visualIntentInferenceTask = nil
+        }
+
+        while !Task.isCancelled {
+            let snapshot = visualIntentInferenceSnapshot(maximumImageCount: Self.visualIntentFastMaximumFrameCount)
+            guard activeMode == .collapsedText else {
+                return
+            }
+            guard !snapshot.images.isEmpty,
+                  snapshot.revision > visualIntentLastProcessedRevision else {
+                try? await Task.sleep(nanoseconds: Self.visualIntentInferenceIdleSleepNanoseconds)
+                continue
+            }
+
+            do {
+                let visualIntentText = try await companionManager.analyzeNotchVisualIntent(
+                    images: snapshot.images,
+                    foregroundSummary: snapshot.foregroundSummary,
+                    previousIntent: latestVisualIntentLabel ?? foregroundHeuristicIntentLabel
+                )
+                guard snapshot.contextSignature == foregroundVisualContextSignature else {
+                    visualIntentLastProcessedRevision = snapshot.revision
+                    continue
+                }
+                guard let normalizedIntent = Self.normalizedVisualIntentText(visualIntentText) else {
+                    visualIntentLastProcessedRevision = snapshot.revision
+                    continue
+                }
+                latestVisualIntentLabel = normalizedIntent
+                latestVisualIntentContextSignature = snapshot.contextSignature
+                latestVisualIntentUpdatedAt = Date()
+                visualIntentLastProcessedRevision = snapshot.revision
+                foregroundIntentLabel = activeForegroundIntentLabel()
+                renderForegroundContext()
+            } catch {
+                visualIntentLastProcessedRevision = snapshot.revision
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "visual",
+                    direction: "error",
+                    event: "notch.visual_intent.analysis_failed",
+                    fields: [
+                        "error": error.localizedDescription,
+                        "frameCount": snapshot.images.count
+                    ]
+                )
+            }
+        }
+    }
+
+    private func scheduleDetailedVisualContextIfNeeded(
+        snapshot: OpenClickyNotchVisualIntentSnapshot,
+        companionManager: CompanionManager
+    ) {
+        guard activeMode == .collapsedText else { return }
+        guard !snapshot.images.isEmpty else { return }
+        guard snapshot.revision > visualIntentLastDetailedRevision else { return }
+        guard visualIntentDetailedTasks.count < Self.visualIntentDetailedMaximumConcurrentTasks else {
+            appendThrottledVisualIntentDiagnostic(
+                event: "notch.visual_context.detailed_skipped",
+                reason: "max_concurrency",
+                fields: [
+                    "reason": "max_concurrency",
+                    "inFlightCount": visualIntentDetailedTasks.count,
+                    "maximumConcurrentTasks": Self.visualIntentDetailedMaximumConcurrentTasks,
+                    "revision": snapshot.revision,
+                    "imageCount": snapshot.images.count
+                ]
+            )
+            return
+        }
+        let now = Date()
+        let previousStartAge = visualIntentLastDetailedStartedAt.map { now.timeIntervalSince($0) }
+
+        let previousIntent = latestVisualIntentLabel ?? foregroundHeuristicIntentLabel
+        visualIntentLastDetailedRevision = snapshot.revision
+        visualIntentLastDetailedStartedAt = now
+        visualIntentDetailedTaskSequence &+= 1
+        let taskID = visualIntentDetailedTaskSequence
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "internal",
+            event: "notch.visual_context.detailed_scheduled",
+            fields: [
+                "taskID": taskID,
+                "revision": snapshot.revision,
+                "imageCount": snapshot.images.count,
+                "scheduleIntervalSeconds": Double(Self.visualIntentDetailedScheduleIntervalNanoseconds) / 1_000_000_000,
+                "secondsSincePreviousStart": previousStartAge ?? -1,
+                "inFlightCount": visualIntentDetailedTasks.count + 1,
+                "maximumConcurrentTasks": Self.visualIntentDetailedMaximumConcurrentTasks,
+                "contextSignature": snapshot.contextSignature ?? ""
+            ]
+        )
+
+        let task = Task { @MainActor [weak self, weak companionManager, snapshot, previousIntent, taskID] in
+            guard let self else { return }
+            defer {
+                self.visualIntentDetailedTasks.removeValue(forKey: taskID)
+            }
+            guard let companionManager else { return }
+
+            do {
+                _ = try await companionManager.analyzeDetailedNotchVisualContext(
+                    images: snapshot.images,
+                    foregroundSummary: snapshot.foregroundSummary,
+                    previousIntent: previousIntent
+                )
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "visual",
+                    direction: "internal",
+                    event: "notch.visual_context.detailed_completed",
+                    fields: [
+                        "taskID": taskID,
+                        "revision": snapshot.revision,
+                        "imageCount": snapshot.images.count,
+                        "inFlightCount": self.visualIntentDetailedTasks.count,
+                        "contextSignature": snapshot.contextSignature ?? "",
+                        "isCurrentContext": snapshot.contextSignature == self.foregroundVisualContextSignature
+                    ]
+                )
+            } catch {
+                OpenClickyMessageLogStore.shared.append(
+                    lane: "visual",
+                    direction: "error",
+                    event: "notch.visual_context.detailed_failed",
+                    fields: [
+                        "taskID": taskID,
+                        "revision": snapshot.revision,
+                        "imageCount": snapshot.images.count,
+                        "inFlightCount": self.visualIntentDetailedTasks.count,
+                        "contextSignature": snapshot.contextSignature ?? "",
+                        "error": error.localizedDescription
+                    ]
+                )
+            }
+        }
+        visualIntentDetailedTasks[taskID] = task
+    }
+
+    private static func sampledVisualIntentFrames(
+        _ frames: [OpenClickyNotchVisualIntentFrame],
+        maximumCount: Int
+    ) -> [OpenClickyNotchVisualIntentFrame] {
+        guard maximumCount > 0, frames.count > maximumCount else {
+            return frames
+        }
+        guard maximumCount > 1 else {
+            return Array(frames.suffix(1))
+        }
+
+        var selectedIndices: [Int] = []
+        for position in 0..<maximumCount {
+            let scaledIndex = Double(position) * Double(frames.count - 1) / Double(maximumCount - 1)
+            let index = Int(scaledIndex.rounded())
+            if selectedIndices.last != index {
+                selectedIndices.append(index)
+            }
+        }
+        var fillIndex = frames.count - 1
+        while selectedIndices.count < maximumCount, fillIndex >= 0 {
+            if !selectedIndices.contains(fillIndex) {
+                selectedIndices.append(fillIndex)
+            }
+            fillIndex -= 1
+        }
+
+        return selectedIndices.sorted().map { frames[$0] }
+    }
+
+    private func visualIntentInferenceSnapshot(
+        maximumImageCount: Int? = nil,
+        sampleAcrossRetainedFrames: Bool = false
+    ) -> OpenClickyNotchVisualIntentSnapshot {
+        let frames: [OpenClickyNotchVisualIntentFrame]
+        if let maximumImageCount, maximumImageCount > 0 {
+            frames = sampleAcrossRetainedFrames
+                ? Self.sampledVisualIntentFrames(visualIntentFrames, maximumCount: maximumImageCount)
+                : Array(visualIntentFrames.suffix(maximumImageCount))
+        } else {
+            frames = visualIntentFrames
+        }
+        let latestDate = frames.last?.capturedAt ?? Date()
+        let contextSignature = foregroundVisualContextSignature
+        let foregroundSummary = Self.visualIntentForegroundSummary(from: latestForegroundIntentState)
+        let images = frames.enumerated().map { index, frame in
+            let age = max(0, latestDate.timeIntervalSince(frame.capturedAt))
+            let stateSummary = Self.visualIntentForegroundSummary(from: frame.foregroundState)
+            let dimensions = "\(frame.screenshotWidthInPixels)x\(frame.screenshotHeightInPixels)"
+            let label = [
+                "intent frame \(index + 1) of \(frames.count)",
+                "\(String(format: "%.1f", age))s before latest",
+                frame.captureLabel,
+                "image dimensions: \(dimensions) pixels",
+                "foreground: \(stateSummary)"
+            ].joined(separator: " | ")
+            return (data: frame.imageData, label: label)
+        }
+        return OpenClickyNotchVisualIntentSnapshot(
+            revision: visualIntentFramesRevision,
+            contextSignature: contextSignature,
+            foregroundSummary: foregroundSummary,
+            images: images
+        )
+    }
+
+    private static func visualIntentForegroundSummary(from state: OpenClickyForegroundIntentState?) -> String {
+        guard let state else { return "unknown foreground state" }
+        var parts = [
+            "app=\(state.appName)",
+            "title=\(state.contextTitle)"
+        ]
+        if let rawWindowTitle = state.rawWindowTitle,
+           !rawWindowTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           rawWindowTitle != state.contextTitle {
+            parts.append("window=\(rawWindowTitle)")
+        }
+        if let browserURLString = state.browserURLString,
+           !browserURLString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            parts.append("url=\(browserURLString)")
+        }
+        return parts.joined(separator: ", ")
+    }
+
+    private static func normalizedVisualIntentText(_ text: String) -> String? {
+        var lines = text
+            .components(separatedBy: .newlines)
+            .map(Self.cleanedVisualIntentLine)
+            .filter { !$0.isEmpty }
+            .filter { !Self.isGenericVisualIntentLine($0) }
+            .filter { !Self.isDegenerateVisualIntentLine($0) }
+        if lines.count == 1 {
+            let sentenceLines = visualIntentSentenceFallbackLines(from: lines[0])
+            if sentenceLines.count > 1 {
+                lines = sentenceLines
+                    .filter { !Self.isGenericVisualIntentLine($0) }
+                    .filter { !Self.isDegenerateVisualIntentLine($0) }
+            }
+        }
+        guard !lines.isEmpty else { return nil }
+        return lines.prefix(4).joined(separator: "\n")
+    }
+
+    private static func cleanedVisualIntentLine(_ line: String) -> String {
+        let withoutBulletPrefix = line
+            .replacingOccurrences(
+                of: #"^\s*(?:[-*]|\d+[.)])\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+        return withoutBulletPrefix
+            .replacingOccurrences(
+                of: #"^\s*(?:line\s*\d+|intent|focus|recent|next|ui\s*task|task|evidence|visual\s*evidence|takeover(?:\s*option)?|reusable\s*skill|skill\s*opportunity)\s*[:.)-]?\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func isGenericVisualIntentLine(_ line: String) -> Bool {
+        let lowercased = line.lowercased()
+        let genericPhrases = [
+            "settle on the active task",
+            "ask for handoff context",
+            "handoff context",
+            "continue the current task",
+            "continue reviewing files",
+            "ask for context",
+            "reviewing or organizing files",
+            "best next assist",
+            "active task or ask",
+            "current task or ask"
+        ]
+        if genericPhrases.contains(where: { lowercased.contains($0) }) {
+            return true
+        }
+        let weakWholeLinePhrases = [
+            "working on debug",
+            "working on current app",
+            "working on current task",
+            "focused window",
+            "steady in zed",
+            "steady in finder"
+        ]
+        return weakWholeLinePhrases.contains(lowercased.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private static func isDegenerateVisualIntentLine(_ line: String) -> Bool {
+        let scalars = line.unicodeScalars.filter {
+            !$0.properties.isWhitespace && !CharacterSet.punctuationCharacters.contains($0)
+        }
+        guard scalars.count >= 40 else { return false }
+
+        var longestRun = 1
+        var currentRun = 1
+        var previousScalar: UnicodeScalar?
+        var counts: [UnicodeScalar: Int] = [:]
+
+        for scalar in scalars {
+            counts[scalar, default: 0] += 1
+            if scalar == previousScalar {
+                currentRun += 1
+                longestRun = max(longestRun, currentRun)
+            } else {
+                currentRun = 1
+                previousScalar = scalar
+            }
+        }
+
+        if longestRun >= 8 {
+            return true
+        }
+        let mostCommonCount = counts.values.max() ?? 0
+        return Double(mostCommonCount) / Double(scalars.count) > 0.32
+    }
+
+    private static func visualIntentSentenceFallbackLines(from text: String) -> [String] {
+        let markerExpanded = text.replacingOccurrences(
+            of: #"(?i)\s+(intent|focus|recent|next)\s*:"#,
+            with: "\n$1:",
+            options: .regularExpression
+        )
+        let markerLines = markerExpanded
+            .components(separatedBy: .newlines)
+            .map(cleanedVisualIntentLine)
+            .filter { !$0.isEmpty }
+        if markerLines.count > 1 {
+            return Array(markerLines.prefix(4))
+        }
+
+        guard let regex = try? NSRegularExpression(pattern: #"[^.!?]+[.!?]?"#) else {
+            return [text]
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex
+            .matches(in: text, range: range)
+            .compactMap { match -> String? in
+                guard let matchRange = Range(match.range, in: text) else { return nil }
+                let line = cleanedVisualIntentLine(String(text[matchRange]))
+                return line.isEmpty ? nil : line
+            }
+            .prefix(4)
+            .map { $0 }
     }
 
     private func showAppContextAffordanceIfUseful(appName: String, appIcon: NSImage?) {
@@ -1580,7 +2329,17 @@ final class OpenClickyNotchCaptureWindowManager {
             accentColor: persistentAccentColor,
             foregroundAppIcon: foregroundAppIcon,
             foregroundAppName: foregroundAppName,
-            submitText: submitText
+            submitText: submitText,
+            hidesWhenClosed: true,
+            onHiddenWhenClosed: { [weak self] in
+                guard let self,
+                      self.activeMode == .collapsedText,
+                      self.mainPanel?.isVisible != true,
+                      let submitText = self.persistentSubmitText else { return }
+                self.isUsingDynamicNotchKitStatusSurface = false
+                self.anchorScreenOverride = screen
+                self.collapseToPill(accentColor: self.persistentAccentColor, submitText: submitText)
+            }
         )
     }
 
@@ -1743,8 +2502,8 @@ final class OpenClickyNotchCaptureWindowManager {
             }
         case .collapsedText, .none:
             height = Self.collapsedPanelHeight
-            widthForScreen = { [foregroundAppName] screen in
-                Self.collapsedPanelWidth(for: screen, appName: foregroundAppName)
+            widthForScreen = { [foregroundAppName, foregroundIntentLabel] screen in
+                Self.collapsedPanelWidth(for: screen, appName: foregroundAppName, intentLabel: foregroundIntentLabel)
             }
         }
         let primaryScreen = preferredAnchorScreen() ?? NSScreen.main ?? panel.screen ?? NSScreen.screens.first
@@ -1861,6 +2620,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
     private let collapsedAgentDotsView = OpenClickyNotchDotsNSView()
     private let voiceAppIconView = NSImageView()
     private let collapsedAppNameLabel = NSTextField(labelWithString: "Current app")
+    private let collapsedAppIntentLabel = NSTextField(labelWithString: "")
     private var hidesCollapsedAppNameText = false
     private var mode: Mode = .voice
     private var dismiss: (() -> Void)?
@@ -1868,7 +2628,9 @@ private final class OpenClickyNotchCaptureRootView: NSView {
     private var accentColor = NSColor(calibratedRed: 0.20, green: 0.50, blue: 1.00, alpha: 1.0)
     private var pendingDeferredShellLayout = false
 
-    private static let collapsedLabelMaxWidth: CGFloat = 300
+    private static let collapsedLabelMaxWidth: CGFloat = 430
+    private static let primaryNotchTextColor = NSColor.black.withAlphaComponent(0.92)
+    private static let secondaryNotchTextColor = NSColor.black.withAlphaComponent(0.76)
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -1885,16 +2647,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
     }
 
     private func updateShellViewFillColor() {
-        let usesLightFill: Bool
-        switch ClickyTheme.current {
-        case .light:
-            usesLightFill = true
-        case .dark:
-            usesLightFill = false
-        case .system:
-            let bestMatch = effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
-            usesLightFill = bestMatch != .darkAqua
-        }
+        let usesLightFill = true
         let baseColor = usesLightFill ? NSColor.white : NSColor.black
         let borderColor = usesLightFill ? NSColor.black : NSColor.white
         switch mode {
@@ -1907,7 +2660,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         needsDisplay = true
     }
 
-    func configureCollapsed(accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hasRunningAgentWork: Bool, hidesAppNameText: Bool = false, expand: @escaping () -> Void, dismiss: @escaping () -> Void) {
+    func configureCollapsed(accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, foregroundIntentLabel: String = "", hasRunningAgentWork: Bool, hidesAppNameText: Bool = false, expand: @escaping () -> Void, dismiss: @escaping () -> Void) {
         mode = .collapsed
         self.accentColor = accentColor
         self.expand = expand
@@ -1918,6 +2671,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
             || foregroundAppName == "Current app"
         collapsedAppIconView.isHidden = foregroundAppIcon == nil
         collapsedAppNameLabel.isHidden = hidesAppNameText || nameIsPlaceholder
+        collapsedAppIntentLabel.isHidden = true
         collapsedPlayIconView.isHidden = hasRunningAgentWork
         collapsedPlayIconView.contentTintColor = accentColor
         collapsedAgentDotsView.isHidden = !hasRunningAgentWork
@@ -1933,7 +2687,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         shellView.roundedShadowColor = nil
         shellView.roundedShadowBlurRadius = 0
         shellView.roundedShadowOffset = .zero
-        updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName)
+        updateForegroundApp(icon: foregroundAppIcon, name: foregroundAppName, intentLabel: foregroundIntentLabel)
         updateShellConstraints(animated: true)
         needsDisplay = true
     }
@@ -1961,6 +2715,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         voiceTitleLabel.isHidden = hidesStatusText
         collapsedAppIconView.isHidden = true
         collapsedAppNameLabel.isHidden = true
+        collapsedAppIntentLabel.isHidden = true
         collapsedPlayIconView.isHidden = true
         collapsedAgentDotsView.isHidden = true
         shellView.cornerRadius = 17
@@ -1976,19 +2731,52 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         updateShellConstraints(animated: true)
     }
 
-    func updateForegroundApp(icon: NSImage?, name: String) {
+    func updateForegroundApp(icon: NSImage?, name: String, intentLabel: String = "") {
         let nameIsPlaceholder = name.trimmingCharacters(in: .whitespaces).isEmpty
             || name == "Current app"
+        let trimmedIntent = intentLabel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let compactIntent = Self.compactIntentText(from: trimmedIntent)
         collapsedAppIconView.image = icon
         voiceAppIconView.image = icon
         collapsedAppNameLabel.stringValue = name
+        collapsedAppIntentLabel.stringValue = compactIntent
+        collapsedAppIntentLabel.toolTip = trimmedIntent.isEmpty ? nil : trimmedIntent
         collapsedAppIconView.isHidden = mode != .collapsed || icon == nil
         collapsedAppNameLabel.isHidden = mode != .collapsed || hidesCollapsedAppNameText || nameIsPlaceholder
+        collapsedAppIntentLabel.isHidden = collapsedAppNameLabel.isHidden || compactIntent.isEmpty
         collapsedPlayIconView.isHidden = mode != .collapsed || !collapsedAgentDotsView.isHidden
         if mode != .collapsed {
             collapsedAgentDotsView.isHidden = true
+            collapsedAppIntentLabel.isHidden = true
         }
         voiceAppIconView.isHidden = mode != .voice || icon == nil
+    }
+
+    private static func compactIntentLine(from intentLabel: String) -> String {
+        visibleIntentLines(from: intentLabel).first ?? ""
+    }
+
+    private static func compactIntentText(from intentLabel: String) -> String {
+        visibleIntentLines(from: intentLabel).joined(separator: "\n")
+    }
+
+    private static func visibleIntentLines(from intentLabel: String, limit: Int = 4) -> [String] {
+        intentLabel
+            .components(separatedBy: .newlines)
+            .map(Self.displayIntentLine)
+            .filter { !$0.isEmpty }
+            .prefix(limit)
+            .map { $0 }
+    }
+
+    private static func displayIntentLine(_ line: String) -> String {
+        line
+            .replacingOccurrences(
+                of: #"^\s*(?:[-*]|\d+[.)]|line\s*\d+\s*[:.)-]?|intent\s*[:.)-]?|focus\s*[:.)-]?|recent\s*[:.)-]?|next\s*[:.)-]?)\s*"#,
+                with: "",
+                options: [.regularExpression, .caseInsensitive]
+            )
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func updateAudioPowerLevel(_ audioPowerLevel: CGFloat) {
@@ -2086,7 +2874,7 @@ private final class OpenClickyNotchCaptureRootView: NSView {
             switch mode {
             case .collapsed:
                 targetWidth = notchWidth * 2.0
-                targetHeight = max(38, safeAreaTop + 6)
+                targetHeight = max(OpenClickyNotchCaptureWindowManager.collapsedPanelHeight, safeAreaTop + 6)
             case .voice:
                 targetWidth = notchWidth * 2.0
                 targetHeight = max(38, safeAreaTop + 6)
@@ -2240,12 +3028,22 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         collapsedPlayIconView.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 20, weight: .bold)
         collapsedAppNameLabel.translatesAutoresizingMaskIntoConstraints = false
         collapsedAppNameLabel.font = .systemFont(ofSize: 13, weight: .heavy)
-        collapsedAppNameLabel.textColor = NSColor.white.withAlphaComponent(0.96)
+        collapsedAppNameLabel.textColor = Self.primaryNotchTextColor
         collapsedAppNameLabel.lineBreakMode = .byTruncatingTail
         collapsedAppNameLabel.maximumNumberOfLines = 1
         collapsedAppNameLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         collapsedAppNameLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
         collapsedAppNameLabel.isHidden = true
+
+        collapsedAppIntentLabel.translatesAutoresizingMaskIntoConstraints = false
+        collapsedAppIntentLabel.font = .systemFont(ofSize: 9.5, weight: .semibold)
+        collapsedAppIntentLabel.textColor = Self.secondaryNotchTextColor
+        collapsedAppIntentLabel.lineBreakMode = .byWordWrapping
+        collapsedAppIntentLabel.maximumNumberOfLines = 8
+        collapsedAppIntentLabel.cell?.usesSingleLineMode = false
+        collapsedAppIntentLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        collapsedAppIntentLabel.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        collapsedAppIntentLabel.isHidden = true
 
         let collapsedStack = NSStackView()
         collapsedStack.orientation = .horizontal
@@ -2253,8 +3051,17 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         collapsedStack.spacing = 4
         collapsedStack.translatesAutoresizingMaskIntoConstraints = false
         collapsedStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        let collapsedTextStack = NSStackView()
+        collapsedTextStack.orientation = .vertical
+        collapsedTextStack.alignment = .leading
+        collapsedTextStack.spacing = -1
+        collapsedTextStack.translatesAutoresizingMaskIntoConstraints = false
+        collapsedTextStack.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        collapsedTextStack.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        collapsedTextStack.addArrangedSubview(collapsedAppNameLabel)
+        collapsedTextStack.addArrangedSubview(collapsedAppIntentLabel)
         collapsedStack.addArrangedSubview(collapsedAppIconView)
-        collapsedStack.addArrangedSubview(collapsedAppNameLabel)
+        collapsedStack.addArrangedSubview(collapsedTextStack)
         shellView.addSubview(collapsedStack)
         shellView.addSubview(collapsedPlayIconView)
         collapsedAgentDotsView.translatesAutoresizingMaskIntoConstraints = false
@@ -2286,8 +3093,9 @@ private final class OpenClickyNotchCaptureRootView: NSView {
             collapsedStack.centerYAnchor.constraint(equalTo: shellView.centerYAnchor),
             // Keep common app names like "Google Chrome" readable while still
             // letting unusually long names tail-truncate inside the compact
-        // notch bar instead of forcing the whole surface wide again.
-            collapsedAppNameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.collapsedLabelMaxWidth)
+            // notch bar instead of forcing the whole surface wide again.
+            collapsedAppNameLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.collapsedLabelMaxWidth),
+            collapsedAppIntentLabel.widthAnchor.constraint(lessThanOrEqualToConstant: Self.collapsedLabelMaxWidth)
         ])
     }
 
@@ -2319,10 +3127,10 @@ private final class OpenClickyNotchCaptureRootView: NSView {
         voiceNotchSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         voiceNotchSpacer.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         voiceTitleLabel.font = .systemFont(ofSize: 14, weight: .heavy)
-        voiceTitleLabel.textColor = NSColor.white.withAlphaComponent(0.96)
+        voiceTitleLabel.textColor = Self.primaryNotchTextColor
         voiceTitleLabel.lineBreakMode = .byTruncatingTail
         voiceSubtitleLabel.font = .systemFont(ofSize: 9.5, weight: .semibold)
-        voiceSubtitleLabel.textColor = NSColor.white.withAlphaComponent(0.62)
+        voiceSubtitleLabel.textColor = Self.secondaryNotchTextColor
         voiceSubtitleLabel.lineBreakMode = .byTruncatingTail
         voiceSubtitleLabel.isHidden = true
         voiceAppIconView.setContentHuggingPriority(.required, for: .horizontal)
