@@ -2369,6 +2369,9 @@ final class OpenAIRealtimeSpeechClient: OpenClickyTTSClient {
         case .authorized:
             return
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                throw Self.microphoneInputError("Microphone permission has not been granted. OpenClicky could not listen to that voice turn.")
+            }
             let granted = await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     continuation.resume(returning: granted)

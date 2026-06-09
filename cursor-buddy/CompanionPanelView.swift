@@ -7,7 +7,6 @@
 //  like Loom's recording panel — dark, rounded, minimal, and special.
 //
 
-import AVFoundation
 import SwiftUI
 
 struct CompanionPanelView: View {
@@ -91,12 +90,7 @@ struct CompanionPanelView: View {
         )
         .background(panelBackground)
         .onAppear {
-            // Surface the native macOS prompts for microphone/camera the first
-            // time the permission guide becomes visible so users don't have to
-            // discover them via the per-feature entry points.
-            if !companionManager.allPermissionsGranted {
-                companionManager.requestPendingPermissionPrompts()
-            }
+            companionManager.refreshAllPermissions()
         }
         .onChange(of: companionManager.isAdvancedModeEnabled) {
             schedulePanelContentSizeRefresh()
@@ -710,16 +704,7 @@ struct CompanionPanelView: View {
                 }
             } else {
                 Button(action: {
-                    // Triggers the native macOS microphone permission dialog on
-                    // first attempt. If already denied, opens System Settings.
-                    let status = AVCaptureDevice.authorizationStatus(for: .audio)
-                    if status == .notDetermined {
-                        AVCaptureDevice.requestAccess(for: .audio) { _ in }
-                    } else {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
+                    companionManager.requestMicrophonePermission()
                 }) {
                     Text("Grant")
                         .font(.system(size: 11, weight: .semibold))
@@ -796,12 +781,7 @@ struct CompanionPanelView: View {
     }
 
     private func requestMicrophonePermissionForOnboarding() {
-        let status = AVCaptureDevice.authorizationStatus(for: .audio)
-        if status == .notDetermined {
-            AVCaptureDevice.requestAccess(for: .audio) { _ in }
-        } else if let microphoneSettingsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
-            NSWorkspace.shared.open(microphoneSettingsURL)
-        }
+        companionManager.requestMicrophonePermission()
     }
 
     private func showAccessibilityPermissionDragAssistantWithFinder() {

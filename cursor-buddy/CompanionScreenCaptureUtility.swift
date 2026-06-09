@@ -42,10 +42,36 @@ enum CompanionScreenCaptureUtility {
            expiresAt > Date() {
             return cached
         }
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
-        cachedShareableContent = content
-        cachedShareableContentExpiresAt = Date().addingTimeInterval(shareableContentCacheLifetime)
-        return content
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
+            cachedShareableContent = content
+            cachedShareableContentExpiresAt = Date().addingTimeInterval(shareableContentCacheLifetime)
+            return content
+        } catch {
+            cachedShareableContent = nil
+            cachedShareableContentExpiresAt = nil
+            if isScreenCaptureAuthorizationError(error) {
+                WindowPositionManager.clearPreviouslyConfirmedScreenRecordingPermission()
+            }
+            throw error
+        }
+    }
+
+    static func isScreenCaptureAuthorizationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let text = [
+            nsError.domain,
+            nsError.localizedDescription,
+            nsError.localizedFailureReason ?? "",
+            nsError.localizedRecoverySuggestion ?? ""
+        ]
+            .joined(separator: " ")
+            .lowercased()
+        return text.contains("tcc")
+            || text.contains("declined")
+            || text.contains("denied")
+            || text.contains("not authorized")
+            || text.contains("not authorised")
     }
 
     /// Pre-fetches SCShareableContent so the first capture after key-down
@@ -212,22 +238,29 @@ enum CompanionScreenCaptureUtility {
 
         let frontmostApp = NSWorkspace.shared.frontmostApplication
         let ownBundleIdentifier = Bundle.main.bundleIdentifier
-        guard let targetWindow = content.windows.first(where: { window in
+        let candidateWindows = content.windows.filter { window in
             guard let appBundleID = window.owningApplication?.bundleIdentifier else { return false }
             guard appBundleID != ownBundleIdentifier else { return false }
             guard appBundleID == frontmostApp?.bundleIdentifier else { return false }
             return window.isOnScreen && window.frame.width > 100 && window.frame.height > 100
+        }
+        guard let targetWindow = candidateWindows.max(by: { lhs, rhs in
+            (lhs.frame.width * lhs.frame.height) < (rhs.frame.width * rhs.frame.height)
         }) else {
-            return try await captureAllScreensAsJPEG()
+            return try await captureCursorScreenAsJPEG()
         }
         recordEncounteredApplication(from: targetWindow, source: "focused_window_capture")
+
+        let windowWidth = max(1, Int(targetWindow.frame.width))
+        let windowHeight = max(1, Int(targetWindow.frame.height))
+        let aspectRatio = CGFloat(windowWidth) / CGFloat(windowHeight)
+        if windowHeight < 220 || aspectRatio > 6 {
+            return try await captureCursorScreenAsJPEG()
+        }
 
         let filter = SCContentFilter(desktopIndependentWindow: targetWindow)
         let configuration = SCStreamConfiguration()
         let maxDimension = 1280
-        let windowWidth = max(1, Int(targetWindow.frame.width))
-        let windowHeight = max(1, Int(targetWindow.frame.height))
-        let aspectRatio = CGFloat(windowWidth) / CGFloat(windowHeight)
         if windowWidth >= windowHeight {
             configuration.width = maxDimension
             configuration.height = Int(CGFloat(maxDimension) / aspectRatio)

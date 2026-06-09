@@ -247,6 +247,7 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
         case .authorized:
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else { return false }
             return await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .audio) { granted in
                     continuation.resume(returning: granted)
@@ -264,6 +265,7 @@ final class OpenClickyWakeWordManager: NSObject, ObservableObject {
         case .authorized:
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else { return false }
             return await withCheckedContinuation { continuation in
                 SFSpeechRecognizer.requestAuthorization { status in
                     continuation.resume(returning: status == .authorized)

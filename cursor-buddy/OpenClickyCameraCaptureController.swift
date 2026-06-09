@@ -104,6 +104,13 @@ final class OpenClickyCameraCaptureController: NSObject, ObservableObject, AVCap
         case .authorized:
             return true
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                await MainActor.run {
+                    authorizationStatus = AVCaptureDevice.authorizationStatus(for: .video)
+                    lastErrorMessage = "Camera permission has not been granted."
+                }
+                return false
+            }
             let granted = await withCheckedContinuation { continuation in
                 AVCaptureDevice.requestAccess(for: .video) { granted in
                     continuation.resume(returning: granted)

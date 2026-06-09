@@ -71,6 +71,7 @@ private final class OpenClickyDynamicNotchKitModel: ObservableObject {
     @Published var mode: Mode = .collapsed
     @Published var foregroundAppIcon: NSImage?
     @Published var foregroundAppName = "Current app"
+    @Published var foregroundIntentLabel = ""
     @Published var agentLiveActivity = OpenClickyAgentLiveActivity()
     var hasRunningAgentWork: Bool { agentLiveActivity.isActive }
     var isDoingSomething: Bool {
@@ -468,6 +469,7 @@ final class OpenClickyDynamicNotchKitBridge {
         accentColor: NSColor,
         foregroundAppIcon: NSImage?,
         foregroundAppName: String,
+        foregroundIntentLabel: String = "",
         hasRunningAgentWork: Bool,
         agentLiveActivity: OpenClickyAgentLiveActivity? = nil,
         openMainPanel: @escaping () -> Void,
@@ -483,6 +485,7 @@ final class OpenClickyDynamicNotchKitBridge {
         model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
+        model.foregroundIntentLabel = foregroundIntentLabel.trimmingCharacters(in: .whitespacesAndNewlines)
         model.agentLiveActivity = liveActivity.isActive ? liveActivity : OpenClickyAgentLiveActivity(isActive: hasRunningAgentWork, runningCount: hasRunningAgentWork ? 1 : 0)
         model.openMainPanel = openMainPanel
         model.submitText = submitText
@@ -516,6 +519,7 @@ final class OpenClickyDynamicNotchKitBridge {
         model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
+        model.foregroundIntentLabel = ""
         model.audioPowerLevel = audioPowerLevel
         model.openMainPanel = openMainPanel
         model.submitText = submitText
@@ -552,6 +556,7 @@ final class OpenClickyDynamicNotchKitBridge {
         model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
+        model.foregroundIntentLabel = ""
         model.submitText = submitText
         model.isExpanded = true
         Task {
@@ -571,15 +576,19 @@ final class OpenClickyDynamicNotchKitBridge {
         accentColor: NSColor,
         foregroundAppIcon: NSImage?,
         foregroundAppName: String,
-        submitText: @escaping (String) -> Void
+        submitText: @escaping (String) -> Void,
+        hidesWhenClosed: Bool = false,
+        onHiddenWhenClosed: (() -> Void)? = nil
     ) {
-        model.hidesWhenClosed = false
+        model.hidesWhenClosed = hidesWhenClosed
+        model.onHiddenWhenClosed = hidesWhenClosed ? onHiddenWhenClosed : nil
         model.mode = .collapsed
         model.contextSuggestion = nil
         model.accentColor = accentColor
         model.theme = .current
         model.foregroundAppIcon = foregroundAppIcon
         model.foregroundAppName = foregroundAppName
+        model.foregroundIntentLabel = ""
         model.submitText = submitText
         model.contextSuggestion = suggestion
         model.isExpanded = true
@@ -590,9 +599,10 @@ final class OpenClickyDynamicNotchKitBridge {
         model.audioPowerLevel = audioPowerLevel
     }
 
-    func updateForegroundApp(icon: NSImage?, name: String) {
+    func updateForegroundApp(icon: NSImage?, name: String, intentLabel: String = "") {
         model.foregroundAppIcon = icon
         model.foregroundAppName = name
+        model.foregroundIntentLabel = intentLabel.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     func updateTheme(accentColor: NSColor, theme: ClickyTheme) {
@@ -635,11 +645,21 @@ private struct OpenClickyDynamicNotchKitCompactLeadingView: View {
         HStack(spacing: 8) {
             compactAppIcon
             if let appName = compactAppName {
-                Text(appName)
-                    .font(.system(size: 13, weight: .heavy, design: .rounded))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundStyle(.white.opacity(0.94))
+                VStack(alignment: .leading, spacing: -1) {
+                    Text(appName)
+                        .font(.system(size: 12.5, weight: .heavy, design: .rounded))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .minimumScaleFactor(0.82)
+                        .foregroundStyle(.white.opacity(0.94))
+                    if let intentLabel = compactIntentLabel {
+                        Text(intentLabel)
+                            .font(.system(size: 8.5, weight: .semibold, design: .rounded))
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                            .foregroundStyle(.white.opacity(0.68))
+                    }
+                }
             }
         }
         // DynamicNotchKit lays compactLeading/compactTrailing on either side of
@@ -689,8 +709,13 @@ private struct OpenClickyDynamicNotchKitCompactLeadingView: View {
         return name == "Current app" ? nil : name
     }
 
+    private var compactIntentLabel: String? {
+        let intent = model.foregroundIntentLabel.openClickyIntentLines.first ?? ""
+        return intent.isEmpty ? nil : intent
+    }
+
     private var compactWidth: CGFloat {
-        model.isExpanded ? 20 : (compactAppName == nil ? 32 : 92)
+        model.isExpanded ? 20 : (compactAppName == nil ? 32 : 172)
     }
 }
 
@@ -801,7 +826,7 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
             HStack(spacing: 8) {
                 expandedAppIcon
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Ask OpenClicky")
+                    Text(expandedTitle)
                         .font(.system(size: 13, weight: .heavy))
                         .foregroundStyle(primaryTextColor.opacity(0.96))
                         .lineLimit(1)
@@ -815,10 +840,27 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
             }
             .frame(height: 34, alignment: .center)
 
+            if !expandedIntentDetailLines.isEmpty {
+                intentBriefView
+            }
+
             quickActionChips
 
             OpenClickyDynamicNotchKitInputRow(model: model)
         }
+    }
+
+    private var intentBriefView: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            ForEach(Array(expandedIntentDetailLines.enumerated()), id: \.offset) { _, line in
+                Text(line)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(primaryTextColor.opacity(0.64))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var quickActionChips: some View {
@@ -980,11 +1022,20 @@ private struct OpenClickyDynamicNotchKitExpandedView: View {
         if model.hasRunningAgentWork, case .collapsed = model.mode {
             return model.agentLiveActivity.subtitle
         }
+        if let headline = model.foregroundIntentLabel.openClickyIntentLines.first,
+           !headline.isEmpty {
+            return headline
+        }
         let name = model.foregroundAppName.trimmingCharacters(in: .whitespacesAndNewlines)
         if name.isEmpty || name == "Current app" {
             return "Choose a control or open the panel"
         }
         return "Focused in \(name)"
+    }
+
+    private var expandedIntentDetailLines: [String] {
+        guard !model.hasRunningAgentWork else { return [] }
+        return Array(model.foregroundIntentLabel.openClickyIntentLines.dropFirst().prefix(3))
     }
 }
 
@@ -1334,16 +1385,24 @@ private struct OpenClickyDynamicNotchKitMiniMeter: View {
 #else
 @MainActor
 final class OpenClickyDynamicNotchKitBridge {
-    func showCollapsed(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, hasRunningAgentWork: Bool, agentLiveActivity: OpenClickyAgentLiveActivity = OpenClickyAgentLiveActivity(), openMainPanel: @escaping () -> Void, submitText: @escaping (String) -> Void = { _ in }, opensExpanded: Bool = false) {}
+    func showCollapsed(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, foregroundIntentLabel: String = "", hasRunningAgentWork: Bool, agentLiveActivity: OpenClickyAgentLiveActivity = OpenClickyAgentLiveActivity(), openMainPanel: @escaping () -> Void, submitText: @escaping (String) -> Void = { _ in }, opensExpanded: Bool = false) {}
     func showVoice(_ phase: OpenClickyNotchVoicePhase, audioPowerLevel: CGFloat, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, openMainPanel: @escaping () -> Void, submitText: @escaping (String) -> Void = { _ in }, opensExpanded: Bool = false) {}
     func showTextInput(on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void, hidesWhenClosed: Bool = false, focusesInput: Bool = true, onHiddenWhenClosed: (() -> Void)? = nil) {}
-    func showContextSuggestion(_ suggestion: OpenClickyNotchContextSuggestion, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void) {}
+    func showContextSuggestion(_ suggestion: OpenClickyNotchContextSuggestion, on screen: NSScreen, accentColor: NSColor, foregroundAppIcon: NSImage?, foregroundAppName: String, submitText: @escaping (String) -> Void, hidesWhenClosed: Bool = false, onHiddenWhenClosed: (() -> Void)? = nil) {}
     func open(on screen: NSScreen) {}
     func close(on screen: NSScreen) {}
     func updateAudioPowerLevel(_ audioPowerLevel: CGFloat) {}
-    func updateForegroundApp(icon: NSImage?, name: String) {}
+    func updateForegroundApp(icon: NSImage?, name: String, intentLabel: String = "") {}
     func updateTheme(accentColor: NSColor, theme: ClickyTheme) {}
     func updateAgentLiveActivity(_ activity: OpenClickyAgentLiveActivity) {}
     func hide() {}
 }
 #endif
+
+private extension String {
+    var openClickyIntentLines: [String] {
+        components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+    }
+}

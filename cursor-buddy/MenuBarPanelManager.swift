@@ -40,7 +40,11 @@ final class MenuBarPanelManager: NSObject {
     private var contentResizeWorkItem: DispatchWorkItem?
     private var isPanelPinned = false
     private var themeObserver: NSObjectProtocol?
+    private var browserIconForegroundObserver: NSObjectProtocol?
+    private var browserIconRefreshTask: Task<Void, Never>?
+    private var browserIconSignature: String?
     private var glassBackdrop: OpenClickyLiquidGlassBackdropView?
+    private let browserTabContextProvider = OpenClickyBrowserTabContextProvider.shared
 
     private let companionManager: CompanionManager
     private let panelWidth: CGFloat = 356
@@ -53,6 +57,7 @@ final class MenuBarPanelManager: NSObject {
         self.companionManager = companionManager
         super.init()
         createStatusItem()
+        startBrowserFaviconTracking()
 
         dismissPanelObserver = NotificationCenter.default.addObserver(
             forName: .clickyDismissPanel,
@@ -100,6 +105,10 @@ final class MenuBarPanelManager: NSObject {
         if let observer = themeObserver {
             NotificationCenter.default.removeObserver(observer)
         }
+        if let observer = browserIconForegroundObserver {
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        browserIconRefreshTask?.cancel()
         if let monitor = clickOutsideMonitor {
             NSEvent.removeMonitor(monitor)
         }
@@ -121,11 +130,93 @@ final class MenuBarPanelManager: NSObject {
 
         guard let button = statusItem?.button else { return }
 
-        button.image = makeClickyMenuBarIcon()
-        button.image?.isTemplate = true
+        applyDefaultStatusItemIcon()
         button.action = #selector(statusItemClicked(_:))
         button.target = self
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+    }
+
+    private func startBrowserFaviconTracking() {
+        browserIconForegroundObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.restartBrowserIconRefresh()
+            }
+        }
+
+        restartBrowserIconRefresh()
+    }
+
+    private func restartBrowserIconRefresh() {
+        browserIconRefreshTask?.cancel()
+        browserIconSignature = nil
+
+        guard currentSupportedBrowserApplication() != nil else {
+            applyDefaultStatusItemIcon()
+            return
+        }
+
+        browserIconRefreshTask = Task { [weak self] in
+            while !Task.isCancelled {
+                guard let self else { return }
+                guard let browser = self.currentSupportedBrowserApplication() else {
+                    self.browserIconSignature = nil
+                    self.applyDefaultStatusItemIcon()
+                    return
+                }
+
+                if let context = await self.browserTabContextProvider.activeTabContext(for: browser) {
+                    self.applyBrowserTabStatusIcon(context)
+                } else {
+                    self.browserIconSignature = nil
+                    self.applyDefaultStatusItemIcon()
+                }
+
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
+        }
+    }
+
+    private func currentSupportedBrowserApplication() -> OpenClickyBrowserApplication? {
+        guard let app = NSWorkspace.shared.frontmostApplication,
+              app.bundleIdentifier != Bundle.main.bundleIdentifier else {
+            return nil
+        }
+
+        return OpenClickyBrowserTabContextProvider.browserApplication(
+            bundleIdentifier: app.bundleIdentifier,
+            displayName: app.localizedName ?? app.bundleURL?.deletingPathExtension().lastPathComponent
+        )
+    }
+
+    private func applyBrowserTabStatusIcon(_ context: OpenClickyBrowserTabContext) {
+        let tooltip = "OpenClicky - \(context.displayTitle)"
+        guard browserIconSignature != context.signature else {
+            statusItem?.button?.toolTip = tooltip
+            return
+        }
+
+        browserIconSignature = context.signature
+        guard let faviconData = context.faviconData,
+              let favicon = NSImage(data: faviconData) else {
+            applyDefaultStatusItemIcon(tooltip: tooltip)
+            return
+        }
+
+        let image = makeMenuBarImage(from: favicon)
+        image.isTemplate = false
+        statusItem?.button?.image = image
+        statusItem?.button?.toolTip = tooltip
+    }
+
+    private func applyDefaultStatusItemIcon(tooltip: String = "OpenClicky") {
+        let image = makeClickyMenuBarIcon()
+        image.isTemplate = true
+        statusItem?.button?.image = image
+        statusItem?.button?.toolTip = tooltip
     }
 
     /// Draws the clicky triangle as a menu bar icon. Uses the same shape
@@ -159,6 +250,26 @@ final class MenuBarPanelManager: NSObject {
 
         NSColor.black.setFill()
         path.fill()
+
+        image.unlockFocus()
+        return image
+    }
+
+    private func makeMenuBarImage(from source: NSImage) -> NSImage {
+        let iconSize: CGFloat = 18
+        let image = NSImage(size: NSSize(width: iconSize, height: iconSize))
+        image.lockFocus()
+
+        NSGraphicsContext.current?.imageInterpolation = .high
+        let drawRect = NSRect(x: 2, y: 2, width: iconSize - 4, height: iconSize - 4)
+        source.draw(
+            in: drawRect,
+            from: .zero,
+            operation: .sourceOver,
+            fraction: 1.0,
+            respectFlipped: true,
+            hints: nil
+        )
 
         image.unlockFocus()
         return image

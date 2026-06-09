@@ -12,6 +12,9 @@ DerivedData/
 /recovered
 /ShippedResources
 /AppResources/OpenClicky/ClaudeAgentSDKBridge/node_modules/
+/AppResources/OpenClicky/LocalVision/.venv/
+/AppResources/OpenClicky/LocalVision/models/
+/AppResources/OpenClicky/LocalVision/logs/
 
 worker/.dev.vars
 worker/.env

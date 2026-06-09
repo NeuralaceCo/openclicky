@@ -12,6 +12,7 @@ import AppKit
 import Combine
 import CoreAudio
 import Foundation
+import ImageIO
 import ScreenCaptureKit
 import SwiftUI
 import UniformTypeIdentifiers
@@ -1414,6 +1415,7 @@ final class CompanionManager: ObservableObject {
     private var voiceFollowUpStopTask: Task<Void, Never>?
     private var pendingWakeWordRestartTask: Task<Void, Never>?
     private var isWakeWordPausedByShortcut = false
+    private static let screenContentPermissionUserDefaultsKey = "hasScreenContentPermission"
 
     /// True when all required permissions (accessibility, screen recording,
     /// microphone, camera, screen content) are granted. Used by the panel to
@@ -1850,7 +1852,9 @@ final class CompanionManager: ObservableObject {
             ]
         )
 
-        let isGranted = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(prompt: true)
+        let isGranted = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(
+            prompt: OpenClickyPermissionPromptPolicy.nativePromptsEnabled
+        )
         hasSystemEventsAutomationPermission = isGranted
 
         if isGranted {
@@ -2095,9 +2099,6 @@ final class CompanionManager: ObservableObject {
     func start() {
         loadBundledKnowledgeIndex()
         refreshAllPermissions()
-        // Warm ScreenCaptureKit's window enumeration so the first
-        // screenshot after a key press doesn't pay the cold-start tax.
-        CompanionScreenCaptureUtility.prewarmShareableContent()
         if !hasCompletedOnboarding {
             hasCompletedOnboarding = true
         }
@@ -3042,8 +3043,8 @@ final class CompanionManager: ObservableObject {
         let previouslyHadScreenRecording = hasScreenRecordingPermission
         let previouslyHadMicrophone = hasMicrophonePermission
         let previouslyHadCamera = hasCameraPermission
+        let previouslyHadScreenContent = hasScreenContentPermission
         let previouslyHadFullDiskAccess = hasFullDiskAccessPermission
-        let previouslyHadSystemEventsAutomation = hasSystemEventsAutomationPermission
         let previouslyHadAll = allPermissionsGranted
 
         let currentlyHasAccessibility = WindowPositionManager.hasAccessibilityPermission()
@@ -3055,7 +3056,11 @@ final class CompanionManager: ObservableObject {
             globalPushToTalkShortcutMonitor.stop()
         }
 
-        hasScreenRecordingPermission = WindowPositionManager.hasScreenRecordingPermission()
+        let hasLiveScreenRecordingPermission = WindowPositionManager.hasScreenRecordingPermission()
+        hasScreenRecordingPermission = WindowPositionManager.shouldTreatScreenRecordingPermissionAsGrantedForSessionLaunch(
+            hasScreenRecordingPermissionNow: hasLiveScreenRecordingPermission,
+            hasPreviouslyConfirmedScreenRecordingPermission: WindowPositionManager.hasPreviouslyConfirmedScreenRecordingPermission()
+        )
 
         let micAuthStatus = AVCaptureDevice.authorizationStatus(for: .audio)
         hasMicrophonePermission = micAuthStatus == .authorized
@@ -3066,18 +3071,17 @@ final class CompanionManager: ObservableObject {
         // Screen content permission is persisted after the ScreenCaptureKit
         // picker approves it, but it is only useful when real Screen Recording
         // permission is also present.
-        let persistedScreenContentPermission = UserDefaults.standard.bool(forKey: "hasScreenContentPermission")
+        let persistedScreenContentPermission = UserDefaults.standard.bool(forKey: Self.screenContentPermissionUserDefaultsKey)
         hasScreenContentPermission = hasScreenRecordingPermission && persistedScreenContentPermission
         hasFullDiskAccessPermission = OpenClickyMacPrivacyPermissionProbe.hasLikelyFullDiskAccess()
-        hasSystemEventsAutomationPermission = OpenClickyMacPrivacyPermissionProbe.hasSystemEventsAutomationPermission(prompt: false)
 
         // Debug: log permission state on changes
         if previouslyHadAccessibility != hasAccessibilityPermission
             || previouslyHadScreenRecording != hasScreenRecordingPermission
             || previouslyHadMicrophone != hasMicrophonePermission
             || previouslyHadCamera != hasCameraPermission
-            || previouslyHadFullDiskAccess != hasFullDiskAccessPermission
-            || previouslyHadSystemEventsAutomation != hasSystemEventsAutomationPermission {
+            || previouslyHadScreenContent != hasScreenContentPermission
+            || previouslyHadFullDiskAccess != hasFullDiskAccessPermission {
             print("Permissions — accessibility: \(hasAccessibilityPermission), screen: \(hasScreenRecordingPermission), mic: \(hasMicrophonePermission), camera: \(hasCameraPermission), screenContent: \(hasScreenContentPermission), fullDiskAccess: \(hasFullDiskAccessPermission), systemEventsAutomation: \(hasSystemEventsAutomationPermission)")
         }
 
@@ -3094,13 +3098,12 @@ final class CompanionManager: ObservableObject {
         if !previouslyHadCamera && hasCameraPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "camera")
         }
+        if !previouslyHadScreenContent && hasScreenContentPermission {
+            ClickyAnalytics.trackPermissionGranted(permission: "screen_content")
+        }
         if !previouslyHadFullDiskAccess && hasFullDiskAccessPermission {
             ClickyAnalytics.trackPermissionGranted(permission: "full_disk_access")
         }
-        if !previouslyHadSystemEventsAutomation && hasSystemEventsAutomationPermission {
-            ClickyAnalytics.trackPermissionGranted(permission: "system_events_automation")
-        }
-
         if !previouslyHadAll && allPermissionsGranted {
             ClickyAnalytics.trackAllPermissionsGranted()
         }
@@ -3110,6 +3113,7 @@ final class CompanionManager: ObservableObject {
         } else if !hasMicrophonePermission {
             wakeWordManager.stop(reason: "microphone_permission_missing")
         }
+
     }
 
     /// Triggers the macOS screen content picker by performing a dummy
@@ -3119,6 +3123,16 @@ final class CompanionManager: ObservableObject {
 
     func requestScreenContentPermission() {
         guard !isRequestingScreenContent else { return }
+        refreshAllPermissions()
+        guard !hasScreenContentPermission else { return }
+        guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+            WindowPositionManager.openScreenRecordingSettings()
+            return
+        }
+        guard hasScreenRecordingPermission else {
+            WindowPositionManager.openScreenRecordingSettings()
+            return
+        }
         isRequestingScreenContent = true
         Task {
             do {
@@ -3140,7 +3154,7 @@ final class CompanionManager: ObservableObject {
                     isRequestingScreenContent = false
                     guard didCapture else { return }
                     hasScreenContentPermission = true
-                    UserDefaults.standard.set(true, forKey: "hasScreenContentPermission")
+                    UserDefaults.standard.set(true, forKey: Self.screenContentPermissionUserDefaultsKey)
                     ClickyAnalytics.trackPermissionGranted(permission: "screen_content")
 
                     // If onboarding was already completed, show the cursor overlay now
@@ -3152,8 +3166,13 @@ final class CompanionManager: ObservableObject {
                 print("Screen content permission request failed: \(error)")
                 await MainActor.run {
                     isRequestingScreenContent = false
-                    hasScreenContentPermission = false
-                    UserDefaults.standard.set(false, forKey: "hasScreenContentPermission")
+                    let persistedScreenContentPermission = UserDefaults.standard.bool(forKey: Self.screenContentPermissionUserDefaultsKey)
+                    if persistedScreenContentPermission && hasScreenRecordingPermission {
+                        hasScreenContentPermission = true
+                    } else {
+                        hasScreenContentPermission = false
+                        UserDefaults.standard.set(false, forKey: Self.screenContentPermissionUserDefaultsKey)
+                    }
                 }
             }
         }
@@ -3189,6 +3208,7 @@ final class CompanionManager: ObservableObject {
     /// Once granted/denied the status sticks and polling picks it up.
     private func promptForMicrophoneIfNotDetermined() {
         guard AVCaptureDevice.authorizationStatus(for: .audio) == .notDetermined else { return }
+        guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else { return }
         AVCaptureDevice.requestAccess(for: .audio) { [weak self] granted in
             Task { @MainActor [weak self] in
                 self?.hasMicrophonePermission = granted
@@ -3196,10 +3216,33 @@ final class CompanionManager: ObservableObject {
         }
     }
 
+    func requestMicrophonePermission() {
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                    NSWorkspace.shared.open(url)
+                }
+                return
+            }
+            promptForMicrophoneIfNotDetermined()
+        case .denied, .restricted:
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+                NSWorkspace.shared.open(url)
+            }
+        case .authorized:
+            hasMicrophonePermission = true
+        @unknown default:
+            break
+        }
+    }
+
     /// Triggers the system camera prompt if the user has never been asked.
     /// Once granted/denied the status sticks and polling picks it up.
     private func promptForCameraIfNotDetermined() {
         guard AVCaptureDevice.authorizationStatus(for: .video) == .notDetermined else { return }
+        guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else { return }
         AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
             Task { @MainActor [weak self] in
                 self?.hasCameraPermission = granted
@@ -3214,6 +3257,12 @@ final class CompanionManager: ObservableObject {
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         switch status {
         case .notDetermined:
+            guard OpenClickyPermissionPromptPolicy.nativePromptsEnabled else {
+                if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
+                    NSWorkspace.shared.open(url)
+                }
+                return
+            }
             promptForCameraIfNotDetermined()
         case .denied, .restricted:
             if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera") {
@@ -3226,14 +3275,10 @@ final class CompanionManager: ObservableObject {
         }
     }
 
-    /// Called when the permission guide or first-run onboarding becomes visible
-    /// so OpenClicky surfaces the macOS prompts for any permissions the user
-    /// has not yet responded to (currently microphone and camera). Permissions
-    /// that require System Settings (accessibility, screen recording) are left
-    /// to the dedicated onboarding buttons.
+    /// Called by permission UI to refresh state without causing macOS native
+    /// prompts. Dedicated Grant buttons are the only UI path that may ask.
     func requestPendingPermissionPrompts() {
-        promptForMicrophoneIfNotDetermined()
-        promptForCameraIfNotDetermined()
+        refreshAllPermissions()
     }
 
     /// Polls all permissions frequently so the UI updates live after the
@@ -15903,6 +15948,607 @@ final class CompanionManager: ObservableObject {
             assistantPrefill: nil,
             onTextChunk: onTextChunk
         )
+    }
+
+    private static func sanitizedPreviousNotchIntent(_ previousIntent: String?) -> String {
+        guard let previousIntent else { return "" }
+        let genericPhrases = [
+            "settle on the active task",
+            "ask for handoff context",
+            "handoff context",
+            "continue the current task",
+            "continue reviewing files",
+            "ask for context",
+            "reviewing or organizing files",
+            "best next assist",
+            "active task or ask",
+            "current task or ask"
+        ]
+        let separators = CharacterSet.newlines.union(CharacterSet(charactersIn: "/"))
+        let cleanedLines = previousIntent
+            .components(separatedBy: separators)
+            .map { rawLine in
+                rawLine
+                    .replacingOccurrences(
+                        of: #"^\s*(?:[-*]|\d+[.)]|line\s*\d+\s*[:.)-]?|intent\s*[:.)-]?|focus\s*[:.)-]?|recent\s*[:.)-]?|next\s*[:.)-]?)\s*"#,
+                        with: "",
+                        options: [.regularExpression, .caseInsensitive]
+                    )
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            .filter { line in
+                guard !line.isEmpty else { return false }
+                let lowercased = line.lowercased()
+                return !genericPhrases.contains { lowercased.contains($0) }
+            }
+            .prefix(2)
+
+        return cleanedLines.joined(separator: " / ")
+    }
+
+    private enum OpenClickyLocalVisionAnalysisMode: String {
+        case fast
+        case detailed
+    }
+
+    private struct OpenClickyLocalVisionResult {
+        let text: String
+        let model: String
+        let analysisMode: OpenClickyLocalVisionAnalysisMode
+        let durationMs: Int
+        let stderr: String
+        let logPath: String
+    }
+
+    private static let defaultLocalVisionModelName = "Qwen3-VL-4B-Instruct-4bit"
+
+    private static func localVisionModelName() -> String {
+        let overrideName = ProcessInfo.processInfo.environment["OPENCLICKY_LOCAL_VISION_MODEL_NAME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let overrideName, !overrideName.isEmpty {
+            return overrideName
+        }
+        return defaultLocalVisionModelName
+    }
+
+    func analyzeNotchVisualIntent(
+        images: [(data: Data, label: String)],
+        foregroundSummary: String,
+        previousIntent: String?
+    ) async throws -> String {
+        let modelID = OpenClickyModelCatalog.voiceAnalysisModel(withID: selectedModel).id
+        let previous = Self.sanitizedPreviousNotchIntent(previousIntent)
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "outgoing",
+            event: "notch.visual_intent.request",
+            fields: [
+                "model": modelID,
+                "imageCount": images.count,
+                "foregroundSummary": foregroundSummary,
+                "previousIntentLength": previous.count
+            ]
+        )
+
+        let systemPrompt = """
+        You are OpenClicky's private visual intent analyst for the notch.
+
+        You receive a rolling sequence of recent screen frames from the active/focused window. Infer the user's exact current task, not just the visible app. Use visible UI, text, cursor context, project/file/page names, app/window/tab metadata, and changes across frames.
+
+        Think like an automation copilot:
+        - identify the user's current goal and subtask.
+        - notice whether they are reading, comparing, editing, debugging, filling a form, replying, planning, reviewing logs, or preparing to run something.
+        - decide whether OpenClicky could safely take over the next step now.
+        - notice repeatable workflows that should become reusable skills or shortcuts.
+        - if the pixels are weak, build the exact task from foreground metadata instead of using filler.
+
+        Output exactly four information-dense lines and nothing else.
+        Do not print labels, prefixes, numbering, bullets, or category names.
+
+        Content order:
+        exact visible task: concrete verb plus the file/page/person/control being worked on
+        concrete visual evidence: artifact/page/file/control/text and recent frame change
+        concrete takeover action OpenClicky could do now, or say no takeover yet and why
+        reusable skill opportunity tied to this exact workflow, or the next exact assist
+
+        Rules:
+        - Use visual evidence first, metadata second.
+        - Prefer specific visible text, filenames, button labels, errors, PR/issue names, form names, or page sections over generic app names.
+        - Prefer concrete verbs: draft, compare, summarize, click, run, fix, extract, reply, create, test, package.
+        - First line must name the artifact or person visible now; never say only "active task", "current task", "files", or an app name.
+        - Keep each line under 150 characters.
+        - Never start a line with Line 1, Line 2, Intent, Focus, Recent, or Next.
+        - Never write "settle on the active task", "ask for handoff context", "continue the current task", "continue reviewing files", or "ask for context".
+        - Do not mention being an AI, model, screenshot, frame, permission, or capture system.
+        - If evidence is weak, say the most likely intent with uncertainty instead of refusing.
+        """
+
+        let userPrompt = """
+        Foreground metadata:
+        \(foregroundSummary)
+
+        Previous precise task, for continuity only. Ignore it if vague or stale:
+        \(previous.isEmpty ? "none" : previous)
+
+        Analyze the attached recent visual frames and update the notch intent now. Do not output generic filler.
+        """
+
+        do {
+            let localResult = try await analyzeLocalQwenNotchVisualIntent(
+                images: images,
+                systemPrompt: systemPrompt,
+                userPrompt: userPrompt,
+                analysisMode: .fast,
+                maxTokens: 360,
+                expectsJSON: false
+            )
+
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual",
+                direction: "incoming",
+                event: "notch.visual_intent.response",
+                fields: [
+                    "model": localResult.model,
+                    "harness": "local_mlx_qwen",
+                    "analysisMode": localResult.analysisMode.rawValue,
+                    "imageCount": images.count,
+                    "responseLength": localResult.text.count,
+                    "responseText": localResult.text,
+                    "durationMs": localResult.durationMs,
+                    "logPath": localResult.logPath,
+                    "stderr": Self.truncatedLocalVisionLogField(localResult.stderr)
+                ]
+            )
+
+            return localResult.text
+        } catch {
+            OpenClickyMessageLogStore.shared.append(
+                lane: "visual",
+                direction: "error",
+                event: "notch.visual_intent.local_qwen_failed",
+                fields: [
+                    "error": error.localizedDescription,
+                    "fallbackModel": modelID,
+                    "imageCount": images.count
+                ]
+            )
+        }
+
+        let inferenceStartedAt = Date()
+        let result = try await analyzeVoiceResponse(
+            images: images,
+            modelID: modelID,
+            systemPrompt: systemPrompt,
+            conversationHistory: [],
+            userPrompt: userPrompt,
+            assistantPrefill: nil,
+            onTextChunk: { _ in }
+        )
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "incoming",
+            event: "notch.visual_intent.response",
+            fields: [
+                "model": modelID,
+                "imageCount": images.count,
+                "responseLength": result.count,
+                "responseText": result,
+                "durationMs": Int(Date().timeIntervalSince(inferenceStartedAt) * 1000)
+            ]
+        )
+
+        return result
+    }
+
+    func analyzeDetailedNotchVisualContext(
+        images: [(data: Data, label: String)],
+        foregroundSummary: String,
+        previousIntent: String?
+    ) async throws -> String {
+        let previous = Self.sanitizedPreviousNotchIntent(previousIntent)
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "outgoing",
+            event: "notch.visual_context.detailed_request",
+            fields: [
+                "harness": "local_mlx_qwen",
+                "analysisMode": OpenClickyLocalVisionAnalysisMode.detailed.rawValue,
+                "imageCount": images.count,
+                "foregroundSummary": foregroundSummary,
+                "previousIntentLength": previous.count
+            ]
+        )
+
+        let systemPrompt = """
+        You are OpenClicky's private screen-understanding engine.
+
+        Analyze the recent screen frames as a timeline of the user's work. Build a detailed machine-readable record that a future automation agent can use to understand the current task, suggest handoff, or create a reusable skill.
+
+        Return one valid JSON object only. Do not wrap it in markdown. Do not include comments. Use concise but information-dense strings. Prefer exact visible UI text, file names, page titles, people, controls, errors, dates, tabs, and code/log snippets. If something is inferred, mark it as inferred and include the evidence.
+
+        Required JSON shape:
+        {
+          "schema_version": "openclicky.visual_context.v1",
+          "one_page_summary": "",
+          "foreground": {
+            "app": "",
+            "title": "",
+            "url_or_location": "",
+            "project_or_workspace": "",
+            "primary_artifact": ""
+          },
+          "screen": {
+            "layout": "",
+            "active_region": "",
+            "visible_panes": [],
+            "interactive_controls": [],
+            "selected_or_focused_items": [],
+            "status_or_error_indicators": []
+          },
+          "visible_text": [
+            {"source": "", "text": "", "importance": ""}
+          ],
+          "entities": {
+            "files": [],
+            "people_or_orgs": [],
+            "apps_or_services": [],
+            "urls": [],
+            "commands_or_code": [],
+            "domain_terms": []
+          },
+          "timeline": {
+            "frames_used": 0,
+            "recent_changes": [],
+            "stable_context": []
+          },
+          "intent": {
+            "current_goal": "",
+            "current_subtask": "",
+            "likely_next_step": "",
+            "confidence": 0.0,
+            "evidence": [],
+            "uncertainties": []
+          },
+          "takeover": {
+            "can_take_over_now": false,
+            "safe_actions": [],
+            "needs_confirmation": [],
+            "risks": []
+          },
+          "skill_opportunities": [
+            {
+              "name": "",
+              "trigger": "",
+              "inputs_needed": [],
+              "repeatable_steps": [],
+              "expected_output": "",
+              "why_useful": ""
+            }
+          ],
+          "profiling_notes": {
+            "ocr_quality": "",
+            "missing_visual_detail": "",
+            "model_failure_modes": []
+          }
+        }
+
+        Rules:
+        - Fill every top-level key.
+        - Keep the JSON around one dense page: detailed enough for later skill creation, not a transcript dump.
+        - Include at least 8 concrete visual observations when available.
+        - Include exact visible strings when they identify the task.
+        - Hard caps: visible_text has at most 12 entries; every visible_text.text is at most 220 characters; every other array has at most 8 entries except skill_opportunities, which has at most 3.
+        - If the same text appears across frames, record it once and note stability in timeline.stable_context.
+        - Summarize long documents, emails, chats, or code blocks instead of copying them verbatim.
+        - Do not repeat any exact string more than once.
+        - Do not invent private content that is not visible or in metadata.
+        - Do not mention screenshot permissions or the capture harness.
+        """
+
+        let userPrompt = """
+        Foreground metadata:
+        \(foregroundSummary)
+
+        Previous precise task, for continuity only. Ignore it if vague or stale:
+        \(previous.isEmpty ? "none" : previous)
+
+        Produce the detailed JSON context from the attached recent frames.
+        """
+
+        let localResult = try await analyzeLocalQwenNotchVisualIntent(
+            images: images,
+            systemPrompt: systemPrompt,
+            userPrompt: userPrompt,
+            analysisMode: .detailed,
+            maxTokens: 4096,
+            expectsJSON: true
+        )
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "incoming",
+            event: "notch.visual_context.detailed_response",
+            fields: [
+                "model": localResult.model,
+                "harness": "local_mlx_qwen",
+                "analysisMode": localResult.analysisMode.rawValue,
+                "imageCount": images.count,
+                "responseLength": localResult.text.count,
+                "responseText": Self.truncatedLocalVisionLogField(localResult.text, limit: 24000),
+                "durationMs": localResult.durationMs,
+                "logPath": localResult.logPath,
+                "stderr": Self.truncatedLocalVisionLogField(localResult.stderr)
+            ]
+        )
+
+        return localResult.text
+    }
+
+    private func analyzeLocalQwenNotchVisualIntent(
+        images: [(data: Data, label: String)],
+        systemPrompt: String,
+        userPrompt: String,
+        analysisMode: OpenClickyLocalVisionAnalysisMode,
+        maxTokens: Int,
+        expectsJSON: Bool
+    ) async throws -> OpenClickyLocalVisionResult {
+        guard let resourcesDirectory = CodexRuntimeLocator.sourceAppResourcesDirectory() else {
+            throw NSError(
+                domain: "OpenClickyLocalVision",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "OpenClicky local vision resources were not found."]
+            )
+        }
+
+        let visionDirectory = resourcesDirectory.appendingPathComponent("LocalVision", isDirectory: true)
+        let pythonURL = visionDirectory.appendingPathComponent(".venv/bin/python", isDirectory: false)
+        let scriptURL = visionDirectory.appendingPathComponent("local_vision_intent.py", isDirectory: false)
+        let modelName = Self.localVisionModelName()
+        let modelURL = visionDirectory
+            .appendingPathComponent("models", isDirectory: true)
+            .appendingPathComponent(modelName, isDirectory: true)
+        let logURL = visionDirectory
+            .appendingPathComponent("logs", isDirectory: true)
+            .appendingPathComponent(
+                analysisMode == .detailed ? "detailed-vision-responses.jsonl" : "vision-responses.jsonl",
+                isDirectory: false
+            )
+        let fileManager = FileManager.default
+
+        guard fileManager.isExecutableFile(atPath: pythonURL.path) else {
+            throw NSError(
+                domain: "OpenClickyLocalVision",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "Local vision Python venv is missing at \(pythonURL.path)."]
+            )
+        }
+        guard fileManager.fileExists(atPath: scriptURL.path) else {
+            throw NSError(
+                domain: "OpenClickyLocalVision",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "Local vision runner is missing at \(scriptURL.path)."]
+            )
+        }
+        var isDirectory: ObjCBool = false
+        guard fileManager.fileExists(atPath: modelURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            throw NSError(
+                domain: "OpenClickyLocalVision",
+                code: 4,
+                userInfo: [NSLocalizedDescriptionKey: "Qwen local vision model \(modelName) is missing at \(modelURL.path). Run scripts/install-local-vision-model.sh."]
+            )
+        }
+
+        let temporaryDirectory = fileManager.temporaryDirectory
+            .appendingPathComponent("OpenClickyLocalVision-\(analysisMode.rawValue)", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        defer {
+            try? fileManager.removeItem(at: temporaryDirectory)
+        }
+
+        let maximumInferenceImageDimension = analysisMode == .detailed ? 640 : nil
+        let preparedImages = try images.enumerated().map { index, image in
+            let imageURL = temporaryDirectory.appendingPathComponent(
+                String(format: "frame-%02d.jpg", index + 1),
+                isDirectory: false
+            )
+            let inferenceData = Self.localVisionImageData(
+                from: image.data,
+                maximumDimension: maximumInferenceImageDimension
+            )
+            try inferenceData.write(to: imageURL, options: [.atomic])
+            return (url: imageURL, inferenceData: inferenceData, sourceData: image.data, label: image.label)
+        }
+
+        let frameMetadata = images.enumerated()
+            .map { index, image in "\(index + 1). \(image.label)" }
+            .joined(separator: "\n")
+        let prompt = """
+        \(systemPrompt)
+
+        \(userPrompt)
+
+        Recent frame order and metadata:
+        \(frameMetadata)
+        """
+
+        var arguments = [
+            scriptURL.path,
+            "--backend", "mlx",
+            "--model", modelURL.path,
+            "--prompt", prompt,
+            "--analysis-mode", analysisMode.rawValue,
+            "--max-tokens", "\(maxTokens)",
+            "--log-path", logURL.path
+        ]
+        if expectsJSON {
+            arguments.append("--expect-json")
+        }
+        for preparedImage in preparedImages {
+            arguments.append("--image")
+            arguments.append(preparedImage.url.path)
+        }
+        for image in images {
+            arguments.append("--image-label")
+            arguments.append(image.label)
+        }
+
+        let frameLogEntries: [[String: Any]] = preparedImages.enumerated().map { index, image in
+            [
+                "index": index + 1,
+                "label": image.label,
+                "sourceBytes": image.sourceData.count,
+                "inferenceBytes": image.inferenceData.count
+            ]
+        }
+
+        OpenClickyMessageLogStore.shared.append(
+            lane: "visual",
+            direction: "outgoing",
+            event: "notch.visual_intent.local_qwen.request",
+            fields: [
+                "model": modelURL.path,
+                "backend": "mlx",
+                "analysisMode": analysisMode.rawValue,
+                "imageCount": images.count,
+                "promptLength": prompt.count,
+                "maxTokens": maxTokens,
+                "expectsJSON": expectsJSON,
+                "maximumInferenceImageDimension": maximumInferenceImageDimension ?? 0,
+                "logPath": logURL.path,
+                "frames": frameLogEntries
+            ]
+        )
+
+        let startedAt = Date()
+        let processResult = try await Self.runLocalVisionProcess(
+            executableURL: pythonURL,
+            arguments: arguments,
+            workingDirectory: visionDirectory
+        )
+        let durationMs = Int(Date().timeIntervalSince(startedAt) * 1000)
+        let text = processResult.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            throw NSError(
+                domain: "OpenClickyLocalVision",
+                code: 5,
+                userInfo: [NSLocalizedDescriptionKey: "Qwen local vision returned an empty response."]
+            )
+        }
+
+        return OpenClickyLocalVisionResult(
+            text: text,
+            model: modelURL.path,
+            analysisMode: analysisMode,
+            durationMs: durationMs,
+            stderr: processResult.stderr,
+            logPath: logURL.path
+        )
+    }
+
+    private static func localVisionImageData(from data: Data, maximumDimension: Int?) -> Data {
+        guard let maximumDimension, maximumDimension > 0 else {
+            return data
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return data
+        }
+        let thumbnailOptions: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maximumDimension
+        ]
+        guard let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, thumbnailOptions as CFDictionary) else {
+            return data
+        }
+        let outputData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            outputData,
+            UTType.jpeg.identifier as CFString,
+            1,
+            nil
+        ) else {
+            return data
+        }
+        let destinationOptions: [CFString: Any] = [
+            kCGImageDestinationLossyCompressionQuality: 0.84
+        ]
+        CGImageDestinationAddImage(destination, thumbnail, destinationOptions as CFDictionary)
+        guard CGImageDestinationFinalize(destination) else {
+            return data
+        }
+        return outputData as Data
+    }
+
+    private static func runLocalVisionProcess(
+        executableURL: URL,
+        arguments: [String],
+        workingDirectory: URL
+    ) async throws -> (stdout: String, stderr: String) {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+
+                process.executableURL = executableURL
+                process.arguments = arguments
+                process.currentDirectoryURL = workingDirectory
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+
+                var environment = ProcessInfo.processInfo.environment
+                let venvBin = executableURL.deletingLastPathComponent().path
+                let basePath = environment["PATH"] ?? "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+                environment["PATH"] = "\(venvBin):\(basePath)"
+                environment["TOKENIZERS_PARALLELISM"] = "false"
+                environment["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+                environment["PYTHONUNBUFFERED"] = "1"
+                process.environment = environment
+
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+
+                    let stdout = String(
+                        data: outputPipe.fileHandleForReading.readDataToEndOfFile(),
+                        encoding: .utf8
+                    ) ?? ""
+                    let stderr = String(
+                        data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                        encoding: .utf8
+                    ) ?? ""
+
+                    guard process.terminationStatus == 0 else {
+                        let message = stderr.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            ? stdout
+                            : stderr
+                        continuation.resume(
+                            throwing: NSError(
+                                domain: "OpenClickyLocalVision",
+                                code: Int(process.terminationStatus),
+                                userInfo: [NSLocalizedDescriptionKey: message]
+                            )
+                        )
+                        return
+                    }
+
+                    continuation.resume(returning: (stdout, stderr))
+                } catch {
+                    continuation.resume(throwing: error)
+                }
+            }
+        }
+    }
+
+    private static func truncatedLocalVisionLogField(_ text: String, limit: Int = 4000) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > limit else { return trimmed }
+        let endIndex = trimmed.index(trimmed.startIndex, offsetBy: limit)
+        return "\(trimmed[..<endIndex])..."
     }
 
     private func analyzeVoiceResponse(
